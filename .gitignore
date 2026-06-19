@@ -1,0 +1,33 @@
+# IDE
+.idea/
+.vscode/
+*.iws
+*.iml
+*.ipr
+
+# Build
+target/
+build/
+dist/
+
+# Environment
+.env
+*.env.local
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (for future frontend)
+node_modules/
+
+# Generated
+.apt_generated
+*.class
+
+# Agent config
+.agents/
