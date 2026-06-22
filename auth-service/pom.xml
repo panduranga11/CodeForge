@@ -49,7 +49,8 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
-		<!-- Flyway -->
+		<!-- Flyway (disabled for now — using Hibernate ddl-auto: update for local dev) -->
+		<!--
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-core</artifactId>
@@ -58,6 +59,7 @@
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>
+		-->
 
 		<!-- Eureka Client -->
 		<dependency>
