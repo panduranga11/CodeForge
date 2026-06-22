@@ -542,13 +542,13 @@ record OAuthProviderResponse(
 ```java
 @RestController @RequestMapping("/auth") @RequiredArgsConstructor
 class UserController {
-    POST  /auth/register            → register(RegisterRequest)       → ApiResponse<TokenResponse>
-    POST  /auth/login               → login(LoginRequest)             → ApiResponse<TokenResponse>
-    POST  /auth/refresh             → refresh(RefreshTokenRequest)    → ApiResponse<TokenResponse>
-    POST  /auth/logout              → logout(RefreshTokenRequest)     → ApiResponse<Void>
-    GET   /auth/profile             → getProfile(X-User-Id header)    → ApiResponse<UserResponse>
-    PUT   /auth/profile             → updateProfile(UpdateProfileRequest) → ApiResponse<UserResponse>
-    POST  /auth/upgrade-to-organizer → upgrade(X-User-Id header)     → ApiResponse<TokenResponse>
+    POST   /auth/register            → register(RegisterRequest)       → ApiResponse<TokenResponse>
+    POST   /auth/login               → login(LoginRequest)             → ApiResponse<TokenResponse>
+    POST   /auth/refresh             → refresh(RefreshTokenRequest)    → ApiResponse<TokenResponse>
+    POST   /auth/logout              → logout(RefreshTokenRequest)     → ApiResponse<Void>
+    GET    /auth/profile             → getProfile(X-User-Id header)    → ApiResponse<UserResponse>
+    PATCH  /auth/profile             → updateProfile(UpdateProfileRequest) → ApiResponse<UserResponse>
+    PATCH  /auth/upgrade-to-organizer → upgrade(X-User-Id header)     → ApiResponse<TokenResponse>
 }
 
 @RestController @RequestMapping("/auth/oauth2") @RequiredArgsConstructor
@@ -1517,7 +1517,7 @@ Client    API GW     Contest Svc     Redis           contest_db
 ```
 Client    API GW    Auth Svc    auth_db    Redis    Contest Svc    contest_db
   │          │          │           │         │           │              │
-  │─POST /auth/upgrade-to-organizer (X-User-Id header)──►│             │
+  │─PATCH /auth/upgrade-to-organizer (X-User-Id header)──►│             │
   │          │─JWT validate         │         │           │              │
   │          │────────────►│        │         │           │              │
   │          │             │─findById─────────►│          │              │
@@ -1762,7 +1762,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 
 ---
 
-#### POST /auth/upgrade-to-organizer
+#### PATCH /auth/upgrade-to-organizer
 
 **Headers:** `Authorization: Bearer <accessToken>` (must be ROLE_STUDENT)
 
@@ -1863,7 +1863,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 
 ---
 
-#### POST /contest/v1/problems/{id}/publish
+#### PATCH /contest/v1/problems/{id}/publish
 
 **Response 200:**
 ```json
@@ -1995,7 +1995,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 
 ---
 
-#### POST /contest/v1/contests/{id}/schedule
+#### PATCH /contest/v1/contests/{id}/schedule
 
 **Response 200:**
 ```json

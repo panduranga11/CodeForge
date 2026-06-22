@@ -208,8 +208,8 @@ Auth Service
 | `POST` | `/auth/refresh` | Public |
 | `POST` | `/auth/logout` | Authenticated |
 | `GET` | `/auth/profile` | Authenticated |
-| `PUT` | `/auth/profile` | Authenticated |
-| **`POST`** | **`/auth/upgrade-to-organizer`** | **Student (self-service)** |
+| `PATCH` | `/auth/profile` | Authenticated |
+| **`PATCH`** | **`/auth/upgrade-to-organizer`** | **Student (self-service)** |
 | **`GET`** | **`/auth/oauth2/authorize/{provider}`** | **Public (OAuth2 initiation)** |
 | **`GET`** | **`/auth/oauth2/callback/{provider}`** | **Public (OAuth2 callback)** |
 | **`POST`** | **`/auth/oauth2/link/{provider}`** | **Authenticated (link provider)** |
@@ -258,15 +258,15 @@ Contest Service
 | `POST` | `/contest/v1/problems` | Organizer, Admin |
 | `GET` | `/contest/v1/problems` | All |
 | `GET` | `/contest/v1/problems/{id}` | All |
-| `PUT` | `/contest/v1/problems/{id}` | Organizer (owner), Admin |
+| `PATCH` | `/contest/v1/problems/{id}` | Organizer (owner), Admin |
 | `POST` | `/contest/v1/problems/{id}/testcases` | Organizer (owner), Admin |
-| `POST` | `/contest/v1/problems/{id}/publish` | Organizer (owner), Admin |
+| `PATCH` | `/contest/v1/problems/{id}/publish` | Organizer (owner), Admin |
 | `POST` | `/contest/v1/contests` | Organizer, Admin |
 | **`POST`** | **`/contest/v1/contests/host`** | **Any Authenticated User** |
 | `GET` | `/contest/v1/contests` | All |
 | `GET` | `/contest/v1/contests/explore` | All |
 | `GET` | `/contest/v1/contests/{id}` | All |
-| `POST` | `/contest/v1/contests/{id}/schedule` | Organizer, Admin |
+| `PATCH` | `/contest/v1/contests/{id}/schedule` | Organizer, Admin |
 | `POST` | `/contest/v1/contests/{id}/register` | Student |
 | **`POST`** | **`/contest/v1/contests/join`** | **Authenticated (invite code)** |
 | **`GET`** | **`/contest/v1/contests/join/{inviteCode}`** | **Authenticated** |
