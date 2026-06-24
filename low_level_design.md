@@ -399,12 +399,13 @@ interface OAuthProviderRepository extends JpaRepository<OAuthProvider, UUID> {
     List<OAuthProvider>     findByUserId(UUID userId);
     Optional<OAuthProvider> findByUserIdAndProvider(UUID userId, Provider p);
     boolean                 existsByUserIdAndProvider(UUID userId, Provider p);
+    long                    countByUserId(UUID userId);
 }
 
 interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID> {
     Optional<RefreshToken> findByToken(String token);
+    void                   revokeAllByUserId(UUID userId);  // @Modifying UPDATE SET revoked=true
     void                   deleteByUserId(UUID userId);
-    void                   deleteByToken(String token);
 }
 ```
 
@@ -416,7 +417,7 @@ interface UserService {
     TokenResponse    register(RegisterRequest req);   // auto-login: returns token on signup
     TokenResponse    login(LoginRequest req);
     TokenResponse    refreshToken(String refreshToken);
-    void             logout(String refreshToken);
+    void             logout(String accessToken, String refreshToken);
     UserResponse     getProfile(UUID userId);
     UserResponse     updateProfile(UUID userId, UpdateProfileRequest req);
     TokenResponse    upgradeToOrganizer(UUID userId);
@@ -428,24 +429,25 @@ class UserServiceImpl implements UserService {
     private final RefreshTokenRepository tokenRepo;
     private final JwtService             jwtService;
     private final PasswordEncoder        passwordEncoder;
-    private final RedisTemplate<String,String> redis;
+    private final UserMapper             userMapper;
     // ... implementations
 }
 
 // ── OAuth2Service
 interface OAuth2Service {
-    TokenResponse     handleOAuthCallback(String provider, OAuth2UserInfo info);
-    UserResponse      linkProvider(UUID userId, String provider, OAuth2UserInfo info);
-    void              unlinkProvider(UUID userId, String provider);
-    List<OAuthProvider> getLinkedProviders(UUID userId);
+    TokenResponse              handleOAuthCallback(Provider provider, OAuth2UserInfo info);
+    void                       linkProvider(UUID userId, Provider provider, OAuth2UserInfo info);
+    void                       unlinkProvider(UUID userId, Provider provider);
+    List<OAuthProviderResponse> getLinkedProviders(UUID userId);
 }
 
 @Service @Transactional
 class OAuth2ServiceImpl implements OAuth2Service {
     private final UserRepository          userRepo;
     private final OAuthProviderRepository oauthRepo;
-    private final JwtService              jwtService;
     private final RefreshTokenRepository  tokenRepo;
+    private final JwtService              jwtService;
+    private final UserMapper              userMapper;
 }
 ```
 
@@ -455,32 +457,49 @@ class OAuth2ServiceImpl implements OAuth2Service {
 // ── JwtService
 @Service
 class JwtService {
-    // Reads JWT_SECRET and JWT_EXPIRY from environment
-    String     generateAccessToken(User user);       // 15-min expiry
-    String     generateRefreshToken();               // 7-day expiry, opaque UUID
+    private final JwtProperties jwtProperties;         // binds app.jwt.* config
+    private final StringRedisTemplate redisTemplate;   // @Autowired(required = false)
+
+    String     generateAccessToken(User user);         // 15-min expiry via jwtProperties
+    String     generateRefreshToken();                 // opaque UUID
     Claims     validateToken(String token);
     UUID       extractUserId(String token);
     String     extractRole(String token);
-    boolean    isTokenBlacklisted(String token);     // checks Redis
-    void       blacklistToken(String token, long ttlSeconds);
+    boolean    isTokenBlacklisted(String token);       // checks Redis (no-op if Redis unavailable)
+    void       blacklistToken(String token);           // auto-calculates TTL from token expiry
+    long       getRefreshTokenExpiryMs();              // delegates to jwtProperties
 }
 
-// ── JwtAuthFilter — NOT NEEDED in Auth Service
-// The API Gateway validates the JWT for ALL protected routes before forwarding.
-// Auth Service is NOT exposed to the internet — only the Gateway can reach it.
-// Auth Service protected endpoints (/profile, /logout, /upgrade-to-organizer)
-// simply read the X-User-Id, X-User-Email, X-User-Role headers
-// that the Gateway already injected — exactly the same as Contest/Execution/AI services.
-//
-// JwtAuthFilter would only be needed if Auth Service were directly internet-facing
-// (which it is NOT in this architecture).
+// ── GatewayAuthFilter
+// Reads X-User-Id, X-User-Email, X-User-Role headers injected by the API Gateway
+// after JWT validation and creates a SecurityContext for downstream @PreAuthorize checks.
+// All downstream services (Auth, Contest, Execution, AI) use this same pattern.
+@Component
+class GatewayAuthFilter extends OncePerRequestFilter {
+    // Reads X-User-Id and X-User-Role headers from the request
+    // Creates UsernamePasswordAuthenticationToken with SimpleGrantedAuthority
+    // Sets SecurityContextHolder.getContext().setAuthentication(...)
+    // If headers are missing (public routes), filter passes through without setting context
+}
 
 // ── SecurityConfig
 @Configuration @EnableWebSecurity @EnableMethodSecurity
 class SecurityConfig {
+    private final GatewayAuthFilter                    gatewayAuthFilter;
+    private final CustomOAuth2UserService              customOAuth2UserService;
+    private final OAuth2AuthenticationSuccessHandler    oAuth2SuccessHandler;
+    private final OAuth2AuthenticationFailureHandler    oAuth2FailureHandler;
+
     SecurityFilterChain filterChain(HttpSecurity http);
-    PasswordEncoder     passwordEncoder();           // BCryptPasswordEncoder(10)
-    AuthenticationManager authenticationManager(AuthenticationConfiguration c);
+    // Session policy: IF_REQUIRED (not STATELESS) — OAuth2 login flow
+    //   requires a session for the authorization request repository.
+    // Adds GatewayAuthFilter before UsernamePasswordAuthenticationFilter.
+    // Permits: /auth/register, /auth/login, /auth/refresh, /auth/oauth2/**, /actuator/health
+    // Configures oauth2Login with authorization/redirection/userInfo endpoints,
+    //   success handler (issues JWT), failure handler (returns error).
+
+    AuthorizationRequestRepository<OAuth2AuthorizationRequest> authorizationRequestRepository();
+    PasswordEncoder     passwordEncoder();             // BCryptPasswordEncoder(10)
 }
 ```
 
@@ -545,7 +564,7 @@ class UserController {
     POST   /auth/register            → register(RegisterRequest)       → ApiResponse<TokenResponse>
     POST   /auth/login               → login(LoginRequest)             → ApiResponse<TokenResponse>
     POST   /auth/refresh             → refresh(RefreshTokenRequest)    → ApiResponse<TokenResponse>
-    POST   /auth/logout              → logout(RefreshTokenRequest)     → ApiResponse<Void>
+    POST   /auth/logout              → logout(Authorization header, RefreshTokenRequest) → ApiResponse<Void>
     GET    /auth/profile             → getProfile(X-User-Id header)    → ApiResponse<UserResponse>
     PATCH  /auth/profile             → updateProfile(UpdateProfileRequest) → ApiResponse<UserResponse>
     PATCH  /auth/upgrade-to-organizer → upgrade(X-User-Id header)     → ApiResponse<TokenResponse>
@@ -553,10 +572,15 @@ class UserController {
 
 @RestController @RequestMapping("/auth/oauth2") @RequiredArgsConstructor
 class OAuth2Controller {
-    GET   /auth/oauth2/authorize/{provider}   → initiateOAuth(provider)
-    GET   /auth/oauth2/callback/{provider}    → handleCallback(code, state)
-    POST  /auth/oauth2/link/{provider}        → linkProvider(userId, provider)  → ApiResponse<Void>
-    DELETE /auth/oauth2/unlink/{provider}     → unlinkProvider(userId, provider) → ApiResponse<Void>
+    // Authorize & Callback handled by Spring Security OAuth2 Login (SecurityConfig),
+    // NOT by explicit controller methods:
+    //   GET  /auth/oauth2/authorize/{provider} → redirects to provider (Spring Security)
+    //   GET  /auth/oauth2/callback/{provider}  → exchanges code → OAuth2SuccessHandler (Spring Security)
+
+    // Explicit endpoints:
+    POST  /auth/oauth2/link/{provider}        → linkProvider(X-User-Id, provider, OAuth2UserInfo body) → ApiResponse<Void>
+    DELETE /auth/oauth2/unlink/{provider}     → unlinkProvider(X-User-Id, provider) → ApiResponse<Void>
+    GET   /auth/oauth2/providers              → getLinkedProviders(X-User-Id) → ApiResponse<List<OAuthProviderResponse>>
 }
 ```
 
@@ -1803,7 +1827,6 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
     "status": "ACTIVE",
     "avatarUrl": null,
     "authType": "LOCAL",
-    "linkedProviders": [],
     "createdAt": "2026-06-19T00:00:00"
   }
 }

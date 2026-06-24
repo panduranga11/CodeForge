@@ -177,26 +177,70 @@ The platform serves three actor types (Students, Organizers/Hosts, Admins) and s
 ```
 Auth Service
 ├── user/
-│   ├── UserController       → /auth/**
-│   ├── UserService          → Business logic
-│   ├── UserRepository       → JPA queries
-│   ├── UserEntity           → users table
+│   ├── controller/
+│   │   └── UserController       → /auth/**
+│   ├── service/
+│   │   ├── UserService          → Interface
+│   │   └── UserServiceImpl      → Business logic
+│   ├── repository/
+│   │   ├── UserRepository       → JPA queries
+│   │   └── RefreshTokenRepository
+│   ├── entity/
+│   │   ├── User                 → users table
+│   │   ├── RefreshToken         → refresh_tokens table
+│   │   ├── Role                 → STUDENT | ORGANIZER | ADMIN
+│   │   ├── UserStatus           → ACTIVE | SUSPENDED | INACTIVE
+│   │   └── AuthType             → LOCAL | OAUTH | BOTH
+│   ├── mapper/
+│   │   └── UserMapper           → Entity ↔ DTO mapping
 │   └── dto/
 │       ├── RegisterRequest
 │       ├── LoginRequest
+│       ├── RefreshTokenRequest
+│       ├── UpdateProfileRequest
+│       ├── TokenResponse
 │       └── UserResponse
 ├── oauth2/
-│   ├── OAuth2Controller     → /auth/oauth2/**
-│   ├── OAuth2UserService    → Handles OAuth user lookup/creation
-│   ├── OAuth2SuccessHandler → Issues JWT after OAuth success
-│   ├── OAuth2ProviderEntity → oauth_providers table
-│   └── OAuth2ProviderRepository
-├── role/
-│   └── RoleEntity
+│   ├── controller/
+│   │   └── OAuth2Controller     → /auth/oauth2/** (link/unlink)
+│   ├── service/
+│   │   ├── OAuth2Service        → Interface
+│   │   ├── OAuth2ServiceImpl    → Link/unlink logic
+│   │   └── CustomOAuth2UserService → OAuth user lookup/creation
+│   ├── handler/
+│   │   ├── OAuth2AuthenticationSuccessHandler → Issues JWT after OAuth success
+│   │   └── OAuth2AuthenticationFailureHandler → Handles OAuth errors
+│   ├── entity/
+│   │   ├── OAuthProvider        → oauth_providers table
+│   │   └── Provider             → GOOGLE | GITHUB
+│   ├── repository/
+│   │   └── OAuthProviderRepository
+│   └── dto/
+│       ├── OAuth2UserInfo
+│       └── OAuthProviderResponse
+├── shared/
+│   ├── config/
+│   │   ├── JpaAuditingConfig    → Enables @CreatedDate, @CreatedBy auditing
+│   │   └── JwtProperties        → Binds app.jwt.* config properties
+│   ├── exception/
+│   │   ├── GlobalExceptionHandler → @ControllerAdvice for all errors
+│   │   ├── AppException          → Base exception class
+│   │   ├── EmailAlreadyExistsException
+│   │   ├── InvalidCredentialsException
+│   │   ├── InvalidRefreshTokenException
+│   │   ├── PasswordNotSetException
+│   │   ├── AccountSuspendedException
+│   │   ├── AccountNotActiveException
+│   │   ├── AlreadyOrganizerException
+│   │   ├── UserNotFoundException
+│   │   ├── ProviderAlreadyLinkedException
+│   │   └── CannotUnlinkLastProviderException
+│   └── response/
+│       └── ApiResponse           → Standard API response wrapper
 └── security/
-    ├── JwtService           → Token generation & validation
-    ├── JwtAuthFilter        → Request filter
-    └── SecurityConfig       → Spring Security + OAuth2 config
+    ├── JwtService               → Token generation & validation
+    ├── GatewayAuthFilter        → Reads X-User-* headers from Gateway
+    └── SecurityConfig           → Spring Security + OAuth2 config
 ```
 
 **Endpoints Owned:**
@@ -214,6 +258,7 @@ Auth Service
 | **`GET`** | **`/auth/oauth2/callback/{provider}`** | **Public (OAuth2 callback)** |
 | **`POST`** | **`/auth/oauth2/link/{provider}`** | **Authenticated (link provider)** |
 | **`DELETE`** | **`/auth/oauth2/unlink/{provider}`** | **Authenticated (unlink provider)** |
+| **`GET`** | **`/auth/oauth2/providers`** | **Authenticated (list linked providers)** |
 
 **OAuth2 Supported Providers (v1.0):**
 
@@ -813,6 +858,7 @@ Participant sees contest lobby / countdown timer
 │ token    │ TEXT                       │
 │ expires_at│ TIMESTAMP                 │
 │ revoked  │ BOOLEAN DEFAULT FALSE      │
+│ created_at│ TIMESTAMP                 │
 └──────────────────────────────────────┘
 ```
 
@@ -934,6 +980,9 @@ Participant sees contest lobby / countdown timer
 │ memory_used   │ INTEGER (MB)                          │
 │ error_message │ TEXT (nullable)                       │
 │ submitted_at  │ TIMESTAMP                             │
+│ created_at    │ TIMESTAMP                             │
+│ updated_at    │ TIMESTAMP                             │
+│ created_by    │ VARCHAR(255)                          │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
@@ -945,6 +994,8 @@ Participant sees contest lobby / countdown timer
 │ passed        │ BOOLEAN                               │
 │ execution_time│ INTEGER (ms)                          │
 │ memory_used   │ INTEGER (MB)                          │
+│ actual_output │ TEXT (nullable)                       │
+│ created_at    │ TIMESTAMP                             │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -957,7 +1008,7 @@ Participant sees contest lobby / countdown timer
 │                    ai_reviews                        │
 ├───────────────┬──────────────────────────────────────┤
 │ id            │ UUID (PK)                             │
-│ submission_id │ UUID (from Assessment Service)        │
+│ submission_id │ UUID (from Execution Service)         │
 │ user_id       │ UUID                                  │
 │ quality_score │ INTEGER (0-100)                       │
 │ feedback      │ JSONB (structured sections)           │
@@ -1105,7 +1156,7 @@ Contest Service (Scheduler Job)
 
 **Flow C — Protected API call (same for both flows):**
 ```
-[Client] ──GET /api/v1/problems──► [API Gateway]
+[Client] ──GET /contest/v1/problems──► [API Gateway]
                                         │
                                   JwtValidationFilter:
                                   1. Extract Bearer token
@@ -1353,12 +1404,18 @@ On parse failure:
 ```yaml
 Services:
   postgres-auth:      PostgreSQL for auth_db       (port 5432)
-  postgres-assessment:PostgreSQL for assessment_db  (port 5433)
-  postgres-ai:        PostgreSQL for ai_db          (port 5434)
+  postgres-contest:   PostgreSQL for contest_db    (port 5433)
+  postgres-execution: PostgreSQL for execution_db  (port 5434)
+  postgres-ai:        PostgreSQL for ai_db          (port 5435)
   redis:              Redis cache                   (port 6379)
+  rabbitmq:           RabbitMQ message broker       (port 5672, mgmt 15672)
+  kafka:              Apache Kafka                  (port 9092)
+  zookeeper:          Zookeeper (Kafka dependency)  (port 2181)
+  eureka-server:      Eureka Service Registry       (port 8761)
   auth-service:       Auth Service                  (port 8081)
-  assessment-service: Assessment Service            (port 8082)
-  ai-service:         AI Service                    (port 8083)
+  contest-service:    Contest Service               (port 8082)
+  execution-service:  Execution Service             (port 8083)
+  ai-service:         AI Service                    (port 8084)
   api-gateway:        Spring Cloud Gateway          (port 8080)
   frontend:           React (Nginx)                 (port 3000)
 ```
@@ -1366,14 +1423,22 @@ Services:
 ### 14.2 Service Startup Order
 
 ```
+zookeeper
+kafka (depends on zookeeper)
+rabbitmq
+eureka-server
 postgres-auth
-postgres-assessment      → auth-service
-postgres-ai                   │
-redis              ──────────►api-gateway ◄─── assessment-service
-                                                       │
-                              ai-service ◄─────────────┘
-                                    │
-                              frontend (React)
+postgres-contest         → auth-service (registers with Eureka)
+postgres-execution            │
+postgres-ai              → contest-service (registers with Eureka)
+redis                         │
+                         → execution-service (registers with Eureka, connects RabbitMQ + Kafka)
+                              │
+                         → ai-service (registers with Eureka)
+                              │
+                         → api-gateway (connects to Eureka for service discovery)
+                              │
+                         → frontend (React)
 ```
 
 ### 14.3 Environment Configuration

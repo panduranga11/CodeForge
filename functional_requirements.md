@@ -1,12 +1,13 @@
 # Functional Requirements Document (FRD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.2
+**Version:** 1.3
 **Status:** Draft
-**Date:** 2026-06-18
+**Date:** 2026-06-24
 **Changes:**
 - v1.1: Added self-service Host a Contest flow (FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011)
 - v1.2: Added OAuth2 authentication via Google and GitHub (FR-AUTH-009, FR-AUTH-010)
+- v1.3: Aligned all service references with v1.5 HLD architecture — replaced "Assessment Service" with "Contest Service" / "Execution Service" throughout traceability matrix; removed stale "organisation" references; updated FR-CONT-010 to allow join during ACTIVE state
 
 ---
 
@@ -430,7 +431,7 @@ Organizers must be able to create a coding problem with full details, constraint
 
 | Field | Required | Constraints |
 |---|---|---|
-| Title | Yes | 5–200 chars, unique within org |
+| Title | Yes | 5–200 chars, unique per creator |
 | Description | Yes | Markdown supported, max 10,000 chars |
 | Difficulty | Yes | `EASY` \| `MEDIUM` \| `HARD` |
 | Category | Yes | See category list below |
@@ -531,7 +532,7 @@ Users must be able to browse and search the problem library.
 
 **Acceptance Criteria:**
 - [ ] Returns paginated results (HTTP 200)
-- [ ] `PRIVATE` problems only visible to org members and admins
+- [ ] `PRIVATE` problems only visible to their creator and admins
 - [ ] `HIDDEN` test case data never returned
 - [ ] Guest can view `PUBLIC` problems list (no solve status)
 
@@ -767,11 +768,11 @@ Users must be able to view full details of a contest.
 - Duration remaining (if active)
 - Problem list (titles and point values only — full problem visible during active contest to registered participants)
 - Participant count
-- Organizer name and organization
+- Host name (contest owner)
 
 **Acceptance Criteria:**
 - [ ] Problem details only visible to registered participants during `ACTIVE` state
-- [ ] `PRIVATE` contests only visible to registered participants and org members
+- [ ] `PRIVATE` contests only visible to registered participants and the host
 - [ ] Returns HTTP 404 for non-existent contests
 
 ---
@@ -814,7 +815,7 @@ Users must be able to browse upcoming, active, and past contests.
 
 **Filters:**
 - Status (`SCHEDULED`, `ACTIVE`, `COMPLETED`)
-- Organization
+- Host (search by host username)
 - Date range
 
 **Acceptance Criteria:**
@@ -850,7 +851,7 @@ Any authenticated user must be able to host (create and manage) a contest throug
 | Visibility | Yes | `PUBLIC` \| `PRIVATE` |
 | Join Mode | Yes | `OPEN` \| `INVITE_ONLY` |
 | Max Participants | No | Default: unlimited |
-| Scoring Mode | Yes | `POINTS` \| `PENALTY_TIME` |
+| Scoring Mode | Yes | `POINTS` \| `PENALTY_TIME` \| `PERCENTAGE` |
 
 **Functional Steps:**
 1. User clicks **"Host a Contest"**
@@ -890,7 +891,7 @@ Users must be able to join a contest by entering an invite code or clicking an i
 
 **Preconditions:**
 - User is authenticated
-- Contest is in `SCHEDULED` status (not yet started or still open for registration)
+- Contest is in `SCHEDULED` or `ACTIVE` status
 
 **Inputs:**
 - Invite code (8-character alphanumeric) OR invite link URL
@@ -900,7 +901,7 @@ Users must be able to join a contest by entering an invite code or clicking an i
 2. System resolves invite code → looks up the corresponding contest
 3. System validates:
    a. Contest exists
-   b. Contest is `SCHEDULED` (registration open)
+   b. Contest is `SCHEDULED` or `ACTIVE` (registration open)
    c. User is not already registered
    d. Max participants limit not reached (if set)
 4. System creates a `ContestParticipant` record
@@ -910,7 +911,7 @@ Users must be able to join a contest by entering an invite code or clicking an i
 - [ ] Returns HTTP 404 if invite code does not match any contest
 - [ ] Returns HTTP 409 if user is already registered
 - [ ] Returns HTTP 409 if contest is full (max participants reached)
-- [ ] Returns HTTP 400 if contest status is `ACTIVE`, `COMPLETED`, or `CANCELLED` (registration closed)
+- [ ] Returns HTTP 400 if contest status is `COMPLETED` or `CANCELLED` (registration closed)
 - [ ] Invite link works identically to entering the invite code manually
 - [ ] Users can share invite link via copy-to-clipboard in the UI
 - [ ] `PUBLIC` contests can also be joined directly without a code via the contest listing
@@ -933,7 +934,7 @@ Users must be able to discover and browse all public contests on a dedicated **E
 - Status: `UPCOMING` (SCHEDULED) | `LIVE` (ACTIVE) | `ENDED` (COMPLETED)
 - Category: `DSA` | `SQL` | `COMPETITIVE` | `ASSESSMENT` | `PRACTICE`
 - Duration: `< 1 Hour` | `1–3 Hours` | `3+ Hours`
-- Host: search by host username or organization
+- Host: search by host username
 
 **Response per Contest Card:**
 - Contest title, host name (username)
@@ -1079,7 +1080,7 @@ Users must be able to view the result of their own submission.
 
 **Acceptance Criteria:**
 - [ ] Students can only view their own submissions (HTTP 403 for others')
-- [ ] Organizers can view all submissions within their organization's contests
+- [ ] Organizers can view all submissions within their own hosted contests
 - [ ] Admins can view all submissions
 - [ ] Hidden test case input/output values never returned
 
@@ -1423,39 +1424,39 @@ Students must have a personal dashboard showing their performance history.
 | FR-AUTH-008 | Self-Service Organizer Upgrade | Auth Service | HIGH | Planned |
 | **FR-AUTH-009** | **OAuth2 Login (Google / GitHub)** | **Auth Service** | **HIGH** | **Planned** |
 | **FR-AUTH-010** | **Link / Unlink OAuth Provider** | **Auth Service** | **MEDIUM** | **Planned** |
-| FR-PROB-001 | Create Problem | Assessment Service | HIGH | Planned |
-| FR-PROB-002 | Add Test Cases | Assessment Service | HIGH | Planned |
-| FR-PROB-003 | Publish Problem | Assessment Service | HIGH | Planned |
-| FR-PROB-004 | List & Search Problems | Assessment Service | HIGH | Planned |
-| FR-PROB-005 | View Problem Detail | Assessment Service | HIGH | Planned |
-| FR-PROB-006 | Update Problem | Assessment Service | MEDIUM | Planned |
-| FR-PROB-007 | Delete Problem | Assessment Service | LOW | Planned |
-| FR-CONT-001 | Create Contest | Assessment Service | HIGH | Planned |
-| FR-CONT-002 | Add Problems to Contest | Assessment Service | HIGH | Planned |
-| FR-CONT-003 | Schedule Contest | Assessment Service | HIGH | Planned |
-| FR-CONT-004 | Cancel Contest | Assessment Service | MEDIUM | Planned |
-| FR-CONT-005 | Participant Registration | Assessment Service | HIGH | Planned |
-| FR-CONT-006 | View Contest Details | Assessment Service | HIGH | Planned |
-| FR-CONT-007 | View Contest Problems | Assessment Service | HIGH | Planned |
-| FR-CONT-008 | List Contests | Assessment Service | HIGH | Planned |
-| FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Assessment Service | HIGH | Planned |
-| FR-CONT-010 | Join via Invite Link / Code | Assessment Service | HIGH | Planned |
-| FR-CONT-011 | Public Contest Discovery | Assessment Service | HIGH | Planned |
-| FR-SUB-001 | Submit Code | Assessment Service | HIGH | Planned |
+| FR-PROB-001 | Create Problem | Contest Service | HIGH | Planned |
+| FR-PROB-002 | Add Test Cases | Contest Service | HIGH | Planned |
+| FR-PROB-003 | Publish Problem | Contest Service | HIGH | Planned |
+| FR-PROB-004 | List & Search Problems | Contest Service | HIGH | Planned |
+| FR-PROB-005 | View Problem Detail | Contest Service | HIGH | Planned |
+| FR-PROB-006 | Update Problem | Contest Service | MEDIUM | Planned |
+| FR-PROB-007 | Delete Problem | Contest Service | LOW | Planned |
+| FR-CONT-001 | Create Contest | Contest Service | HIGH | Planned |
+| FR-CONT-002 | Add Problems to Contest | Contest Service | HIGH | Planned |
+| FR-CONT-003 | Schedule Contest | Contest Service | HIGH | Planned |
+| FR-CONT-004 | Cancel Contest | Contest Service | MEDIUM | Planned |
+| FR-CONT-005 | Participant Registration | Contest Service | HIGH | Planned |
+| FR-CONT-006 | View Contest Details | Contest Service | HIGH | Planned |
+| FR-CONT-007 | View Contest Problems | Contest Service | HIGH | Planned |
+| FR-CONT-008 | List Contests | Contest Service | HIGH | Planned |
+| FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Contest Service | HIGH | Planned |
+| FR-CONT-010 | Join via Invite Link / Code | Contest Service | HIGH | Planned |
+| FR-CONT-011 | Public Contest Discovery | Contest Service | HIGH | Planned |
+| FR-SUB-001 | Submit Code | Execution Service | HIGH | Planned |
 | FR-SUB-002 | Verdict Generation | Execution Engine | HIGH | Planned |
 | FR-SUB-003 | Language Support | Execution Engine | HIGH | Planned |
-| FR-SUB-004 | View Submission Result | Assessment Service | HIGH | Planned |
-| FR-SUB-005 | Submission History | Assessment Service | MEDIUM | Planned |
-| FR-SUB-006 | Rate Limiting | Assessment Service + Redis | MEDIUM | Planned |
-| FR-LEAD-001 | Contest Leaderboard | Assessment Service | HIGH | Planned |
-| FR-LEAD-002 | Global Leaderboard | Assessment Service | MEDIUM | Planned |
+| FR-SUB-004 | View Submission Result | Execution Service | HIGH | Planned |
+| FR-SUB-005 | Submission History | Execution Service | MEDIUM | Planned |
+| FR-SUB-006 | Rate Limiting | Execution Service + Redis | MEDIUM | Planned |
+| FR-LEAD-001 | Contest Leaderboard | Contest Service | HIGH | Planned |
+| FR-LEAD-002 | Global Leaderboard | Contest Service | MEDIUM | Planned |
 | FR-AI-001 | AI Code Review | AI Service | HIGH | Planned |
 | FR-AI-002 | Complexity Analysis | AI Service | HIGH | Planned |
 | FR-AI-003 | AI Hint Generation | AI Service | HIGH | Planned |
 | FR-AI-004 | Learning Roadmap | AI Service | MEDIUM | Planned |
 | FR-AI-005 | Interview Prep Questions | AI Service | LOW | Planned |
-| FR-ANAL-001 | Contest Analytics | Assessment Service | MEDIUM | Planned |
-| FR-ANAL-002 | User Performance Dashboard | Assessment Service | MEDIUM | Planned |
+| FR-ANAL-001 | Contest Analytics | Contest Service | MEDIUM | Planned |
+| FR-ANAL-002 | User Performance Dashboard | Contest Service | MEDIUM | Planned |
 
 ---
 
@@ -1471,7 +1472,8 @@ Students must have a personal dashboard showing their performance history.
 | 1.0 | 2026-06-18 | Initial FRD |
 | 1.1 | 2026-06-18 | Added self-service Host a Contest flow: FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011; updated Actors table and RBAC matrix |
 | 1.2 | 2026-06-18 | Added OAuth2 authentication: FR-AUTH-009 (OAuth Login), FR-AUTH-010 (Link/Unlink Provider); updated FR-AUTH-001 and FR-AUTH-002 to include OAuth paths |
+| 1.3 | 2026-06-24 | Aligned with HLD v1.5: replaced all "Assessment Service" → "Contest Service"/"Execution Service"; removed stale org references; updated FR-CONT-010 join conditions |
 
 ---
 
-*Document Version: 1.2 | CodeForge Platform*
+*Document Version: 1.3 | CodeForge Platform*
