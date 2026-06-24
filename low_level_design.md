@@ -591,10 +591,11 @@ class OAuth2Controller {
 #### Entities
 
 ```java
-// ── problems table
+// ── problems table (scoped to contest — no standalone problem library)
 @Entity @Table(name = "problems")
 class Problem {
     UUID            id;
+    Contest         contest;         // @ManyToOne → contests table
     String          title;           // VARCHAR(200)
     String          description;     // TEXT (Markdown)
     Difficulty      difficulty;      // ENUM: EASY | MEDIUM | HARD
@@ -606,12 +607,13 @@ class Problem {
     String          constraintsText;
     String          explanation;     // nullable
     String          tags;            // comma-separated
-    Visibility      visibility;      // ENUM: PUBLIC | PRIVATE
+    int             points;          // points for solving this problem in the contest
+    int             sequenceNo;      // display order within the contest
     ProblemStatus   status;          // ENUM: DRAFT | PUBLISHED
     UUID            createdBy;       // user_id from auth_db (no FK)
     LocalDateTime   deletedAt;       // soft delete
     List<TestCase>  testCases;       // @OneToMany
-    // audit: createdAt, updatedAt, createdBy (auditing field)
+    // audit: createdAt, updatedAt
 }
 
 // ── test_cases table
@@ -647,16 +649,8 @@ class Contest {
     // audit: createdAt, updatedAt, createdBy (auditing field)
 }
 
-// ── contest_problems table
-@Entity @Table(name = "contest_problems")
-class ContestProblem {
-    UUID    id;
-    Contest contest;     // @ManyToOne
-    Problem problem;     // @ManyToOne
-    int     points;
-    int     sequenceNo;
-    // UNIQUE(contest_id, problem_id)
-}
+// ── contest_problems table — REMOVED
+// Problems now have a direct contest_id FK. No junction table needed.
 
 // ── contest_participants table
 @Entity @Table(name = "contest_participants")
@@ -689,7 +683,7 @@ enum ProblemCategory { ARRAYS, STRINGS, LINKED_LIST, TREES, GRAPHS,
                        DYNAMIC_PROGRAMMING, GREEDY, BACKTRACKING,
                        SORTING, SEARCHING, MATH, SQL,
                        SYSTEM_DESIGN, MISCELLANEOUS }
-enum Visibility      { PUBLIC, PRIVATE }
+enum Visibility      { PUBLIC, PRIVATE }        // Contest only (problems are always contest-scoped)
 enum ProblemStatus   { DRAFT, PUBLISHED }
 enum TestCaseType    { SAMPLE, HIDDEN }
 enum ContestStatus   { DRAFT, SCHEDULED, ACTIVE, COMPLETED, CANCELLED }
@@ -701,20 +695,14 @@ enum ScoringMode     { POINTS, PENALTY_TIME, PERCENTAGE }
 
 ```java
 interface ProblemRepository extends JpaRepository<Problem, UUID> {
-    Page<Problem>    findByStatusAndDeletedAtIsNull(ProblemStatus s, Pageable p);
-    Page<Problem>    findByStatusAndVisibilityAndDeletedAtIsNull(
-                         ProblemStatus s, Visibility v, Pageable p);
+    List<Problem>     findByContestIdAndDeletedAtIsNullOrderBySequenceNo(UUID contestId);
+    List<Problem>     findByContestIdAndStatusAndDeletedAtIsNullOrderBySequenceNo(
+                          UUID contestId, ProblemStatus status);
+    Optional<Problem> findByIdAndContestIdAndDeletedAtIsNull(UUID id, UUID contestId);
     Optional<Problem> findByIdAndDeletedAtIsNull(UUID id);
-    boolean          existsByTitleAndCreatedBy(String title, UUID userId);
-    // Search with filters
-    @Query("SELECT p FROM Problem p WHERE p.status = 'PUBLISHED' " +
-           "AND (:difficulty IS NULL OR p.difficulty = :difficulty) " +
-           "AND (:category IS NULL OR p.category = :category) " +
-           "AND (:q IS NULL OR LOWER(p.title) LIKE LOWER(CONCAT('%',:q,'%'))) " +
-           "AND p.deletedAt IS NULL")
-    Page<Problem>    searchProblems(Difficulty difficulty,
-                                   ProblemCategory category,
-                                   String q, Pageable pageable);
+    boolean           existsByTitleAndContestId(String title, UUID contestId);
+    long              countByContestIdAndDeletedAtIsNull(UUID contestId);
+    long              countByContestIdAndStatusAndDeletedAtIsNull(UUID contestId, ProblemStatus status);
 }
 
 interface TestCaseRepository extends JpaRepository<TestCase, UUID> {
@@ -737,10 +725,7 @@ interface ContestParticipantRepository extends JpaRepository<ContestParticipant,
     Optional<ContestParticipant> findByContestIdAndUserId(UUID contestId, UUID userId);
 }
 
-interface ContestProblemRepository extends JpaRepository<ContestProblem, UUID> {
-    List<ContestProblem> findByContestIdOrderBySequenceNo(UUID contestId);
-    boolean              existsByContestIdAndProblemId(UUID contestId, UUID problemId);
-}
+// ContestProblemRepository — REMOVED (problems have direct contest_id FK)
 
 interface LeaderboardRepository extends JpaRepository<Leaderboard, UUID> {
     Optional<Leaderboard>     findByContestIdAndUserId(UUID contestId, UUID userId);
@@ -753,28 +738,28 @@ interface LeaderboardRepository extends JpaRepository<Leaderboard, UUID> {
 #### Service Interfaces
 
 ```java
+// Problems are scoped to contests — all operations require contestId
 interface ProblemService {
-    ProblemResponse      create(CreateProblemRequest req, UUID createdBy);
-    ProblemResponse      getById(UUID id);
-    Page<ProblemResponse> list(ProblemFilterRequest filter, Pageable p);
-    ProblemResponse      update(UUID id, UpdateProblemRequest req, UUID updatedBy);
-    TestCaseResponse     addTestCase(UUID problemId, CreateTestCaseRequest req, UUID userId);
-    ProblemResponse      publish(UUID problemId, UUID userId);
-    void                 delete(UUID problemId);  // Admin only, soft delete
+    ProblemResponse      create(UUID contestId, CreateProblemRequest req, UUID userId);
+    ProblemResponse      getById(UUID contestId, UUID problemId);
+    List<ProblemResponse> listByContest(UUID contestId);
+    ProblemResponse      update(UUID contestId, UUID problemId, UpdateProblemRequest req, UUID userId);
+    TestCaseResponse     addTestCase(UUID contestId, UUID problemId, CreateTestCaseRequest req, UUID userId);
+    ProblemResponse      publish(UUID contestId, UUID problemId, UUID userId);
+    void                 delete(UUID contestId, UUID problemId, UUID userId);
 }
 
 interface ContestService {
     ContestResponse      create(CreateContestRequest req, UUID hostId);
-    ContestResponse      host(HostContestRequest req, UUID userId);   // self-service
     ContestResponse      getById(UUID id);
-    ContestResponse      getByInviteCode(String inviteCode);          // Authenticated
-    Page<ContestResponse> list(ContestFilterRequest filter, Pageable p);
+    ContestResponse      getByInviteCode(String inviteCode);
+    Page<ContestResponse> list(Pageable p);
+    Page<ContestResponse> explore(Pageable p);
     ContestResponse      schedule(UUID contestId, UUID userId);
     ContestResponse      cancel(UUID contestId, UUID userId);
-    JoinContestResponse  join(String inviteCode, UUID userId);        // invite flow
-    void                 register(UUID contestId, UUID userId);       // open registration
-    void                 addProblem(UUID contestId, UUID problemId,
-                                    int points, int seq, UUID userId);
+    JoinContestResponse  join(JoinContestRequest req, UUID userId);
+    void                 register(UUID contestId, UUID userId);
+    // Problems managed via ProblemService (nested under contest)
     // Internal (called by scheduler)
     void                 activate(UUID contestId);
     void                 complete(UUID contestId);

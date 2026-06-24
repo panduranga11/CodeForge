@@ -278,7 +278,7 @@ Auth Service
 ```
 Contest Service
 ├── problem/
-│   ├── ProblemController    → /contest/v1/problems
+│   ├── ProblemController    → /contest/v1/contests/{contestId}/problems
 │   ├── ProblemService
 │   ├── ProblemRepository
 │   └── TestCaseRepository
@@ -296,28 +296,32 @@ Contest Service
     └── AnalyticsService
 ```
 
+> **Design Decision:** Problems are scoped to contests — there is no standalone problem library. A host creates problems within their contest. Problems are only visible to registered participants during an ACTIVE contest.
+
 **Endpoints Owned:**
 
 | Method | Path | Access |
 |---|---|---|
-| `POST` | `/contest/v1/problems` | Organizer, Admin |
-| `GET` | `/contest/v1/problems` | All |
-| `GET` | `/contest/v1/problems/{id}` | All |
-| `PATCH` | `/contest/v1/problems/{id}` | Organizer (owner), Admin |
-| `POST` | `/contest/v1/problems/{id}/testcases` | Organizer (owner), Admin |
-| `PATCH` | `/contest/v1/problems/{id}/publish` | Organizer (owner), Admin |
+| `POST` | `/contest/v1/contests/{cId}/problems` | Contest Host |
+| `GET` | `/contest/v1/contests/{cId}/problems` | Contest Host / Participants (ACTIVE) |
+| `GET` | `/contest/v1/contests/{cId}/problems/{pId}` | Contest Host / Participants (ACTIVE) |
+| `PATCH` | `/contest/v1/contests/{cId}/problems/{pId}` | Contest Host |
+| `POST` | `/contest/v1/contests/{cId}/problems/{pId}/testcases` | Contest Host |
+| `PATCH` | `/contest/v1/contests/{cId}/problems/{pId}/publish` | Contest Host |
+| `DELETE` | `/contest/v1/contests/{cId}/problems/{pId}` | Contest Host |
 | `POST` | `/contest/v1/contests` | Organizer, Admin |
 | **`POST`** | **`/contest/v1/contests/host`** | **Any Authenticated User** |
 | `GET` | `/contest/v1/contests` | All |
 | `GET` | `/contest/v1/contests/explore` | All |
 | `GET` | `/contest/v1/contests/{id}` | All |
-| `PATCH` | `/contest/v1/contests/{id}/schedule` | Organizer, Admin |
+| `PATCH` | `/contest/v1/contests/{id}/schedule` | Contest Host |
+| `POST` | `/contest/v1/contests/{id}/cancel` | Contest Host |
 | `POST` | `/contest/v1/contests/{id}/register` | Student |
 | **`POST`** | **`/contest/v1/contests/join`** | **Authenticated (invite code)** |
 | **`GET`** | **`/contest/v1/contests/join/{inviteCode}`** | **Authenticated** |
 | `GET` | `/contest/v1/leaderboard/contest/{contestId}` | All |
 | `GET` | `/contest/v1/leaderboard/global` | All |
-| `GET` | `/contest/v1/analytics/contest/{contestId}` | Organizer, Admin |
+| `GET` | `/contest/v1/analytics/contest/{contestId}` | Contest Host |
 | `GET` | `/contest/v1/analytics/user/dashboard` | Student |
 
 ---

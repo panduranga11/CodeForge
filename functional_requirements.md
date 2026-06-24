@@ -415,23 +415,25 @@ Users who registered via email/password must be able to **link** a Google or Git
 
 ## 6. FR-PROB — Problem Management
 
+> **Design Decision:** Problems are scoped to contests. There is no standalone problem library. A contest host creates problems within their contest, and problems are only visible to registered participants during an ACTIVE contest.
+
 ### FR-PROB-001: Create Problem
 
 | Field | Detail |
 |---|---|
 | **ID** | FR-PROB-001 |
 | **Title** | Create Problem |
-| **Actor** | Organizer, Admin |
+| **Actor** | Contest Host |
 | **Priority** | HIGH |
 
 **Description:**
-Organizers must be able to create a coding problem with full details, constraints, and examples.
+Contest hosts must be able to create coding problems within their contest. Problems are always scoped to a contest and cannot be accessed independently.
 
 **Inputs:**
 
 | Field | Required | Constraints |
 |---|---|---|
-| Title | Yes | 5–200 chars, unique per creator |
+| Title | Yes | 5–200 chars, unique per contest |
 | Description | Yes | Markdown supported, max 10,000 chars |
 | Difficulty | Yes | `EASY` \| `MEDIUM` \| `HARD` |
 | Category | Yes | See category list below |
@@ -444,16 +446,18 @@ Organizers must be able to create a coding problem with full details, constraint
 | Sample Output | Yes | Corresponding to sample input |
 | Explanation | No | Optional explanation of sample |
 | Tags | No | Max 10 tags |
-| Visibility | Yes | `PUBLIC` \| `PRIVATE` (org only) |
+| Points | Yes | Score value for solving this problem |
+| Sequence No | Yes | Display order within the contest |
 
 **Problem Categories:**
 `ARRAYS` · `STRINGS` · `LINKED_LIST` · `TREES` · `GRAPHS` · `DYNAMIC_PROGRAMMING` · `GREEDY` · `BACKTRACKING` · `SORTING` · `SEARCHING` · `MATH` · `SQL` · `SYSTEM_DESIGN` · `MISCELLANEOUS`
 
 **Acceptance Criteria:**
 - [ ] Problem saved with `DRAFT` status by default
-- [ ] At least 1 visible example (sample test case) required
+- [ ] Problem is always scoped to a contest (contest_id FK required)
+- [ ] Only the contest host can create problems in their contest
+- [ ] Cannot create problems in ACTIVE or COMPLETED contests
 - [ ] Markdown in description is sanitized before storage
-- [ ] Organizer can only create problems they own
 - [ ] Returns HTTP 201 with created problem ID
 
 ---
@@ -507,34 +511,27 @@ A problem must be explicitly published before it appears in contests or public l
 
 ---
 
-### FR-PROB-004: List & Search Problems
+### FR-PROB-004: List Contest Problems
 
 | Field | Detail |
 |---|---|
 | **ID** | FR-PROB-004 |
-| **Title** | List & Search Problems |
-| **Actor** | Student, Organizer, Admin |
+| **Title** | List Contest Problems |
+| **Actor** | Contest Host, Registered Participants (during ACTIVE contest) |
 | **Priority** | HIGH |
 
 **Description:**
-Users must be able to browse and search the problem library.
-
-**Filters Available:**
-- Difficulty (`EASY`, `MEDIUM`, `HARD`)
-- Category
-- Tags
-- Status (`SOLVED`, `UNSOLVED`, `ATTEMPTED` — for authenticated users)
-- Search by title keyword
+Users must be able to view problems within a specific contest. There is no standalone problem library — problems are only accessible within their contest context.
 
 **Response:**
-- Paginated list (default 20 per page)
-- Each item: ID, title, difficulty, category, acceptance rate, solve count
+- Ordered list by sequence number
+- Each item: ID, title, difficulty, category, points, sequence number
 
 **Acceptance Criteria:**
-- [ ] Returns paginated results (HTTP 200)
-- [ ] `PRIVATE` problems only visible to their creator and admins
+- [ ] Contest host can view all problems (any contest state)
+- [ ] Registered participants can only view PUBLISHED problems during ACTIVE contest
 - [ ] `HIDDEN` test case data never returned
-- [ ] Guest can view `PUBLIC` problems list (no solve status)
+- [ ] Returns HTTP 403 if user is not host or registered participant
 
 ---
 
