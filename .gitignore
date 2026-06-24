@@ -29,5 +29,8 @@ node_modules/
 .apt_generated
 *.class
 
+# Postman
+**/postman/
+
 # Agent config
 .agents/
