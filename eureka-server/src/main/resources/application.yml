@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: eureka-server
+
+server:
+  port: 8761
+
+eureka:
+  client:
+    register-with-eureka: false
+    fetch-registry: false
+
+  server:
+    # How often to evict expired instances (default 60s)
+    eviction-interval-timer-in-ms: 30000
+
+    # Disable self-preservation in dev (in prod, set to true)
+    # Self-preservation prevents mass eviction when network partitions occur
+    enable-self-preservation: false
+
+    # Threshold below which self-preservation kicks in (when enabled)
+    renewal-percent-threshold: 0.85
+
+    # How often to recalculate the renewal threshold
+    renewal-threshold-update-interval-ms: 30000
+
+    # Don't wait for instances to sync on startup (standalone mode)
+    wait-time-in-ms-when-sync-empty: 0
+
+    # Response cache update interval — how fast clients see new registrations
+    response-cache-update-interval-ms: 5000
+
+    # Disable response cache for faster registration visibility in dev
+    use-read-only-response-cache: false
+
+  instance:
+    hostname: localhost
+
+  
+    # Time before server considers an instance dead after last heartbeat
+    lease-expiration-duration-in-seconds: 90
+
+logging:
+  level:
+    com.netflix.eureka: WARN
+    com.netflix.discovery: WARN
