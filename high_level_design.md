@@ -1,15 +1,16 @@
 # High Level Design (HLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.5
+**Version:** 1.6
 **Status:** Draft
-**Date:** 2026-06-19
+**Date:** 2026-06-25
 **Changes:**
 - v1.1: Added self-service "Host a Contest" flow with invite link/code system
 - v1.2: Added OAuth2 authentication (Google, GitHub)
 - v1.3: Split Assessment Service → Contest Service (8082) + Execution Service (8083)
 - v1.4: Added Eureka Service Discovery, RabbitMQ execution queue, Kafka event streaming
 - v1.5: Removed Organisation concept; aligned all flows, DB sections, and deployment config with current 4-service architecture
+- v1.6: Scoped problems to contests — problems table gains `contest_id` FK, `points`, `sequence_no`; removed `visibility` and the `contest_problems` junction table; nested problem routes under `/contest/v1/contests/{contestId}/problems`; updated public routes, data flows, and internal service-to-service test-case fetch path
 
 ---
 
@@ -423,7 +424,6 @@ API Gateway
 - `POST /auth/refresh`
 - `GET /auth/oauth2/authorize/{provider}`
 - `GET /auth/oauth2/callback/{provider}`
-- `GET /contest/v1/problems` (public problems)
 - `GET /contest/v1/contests` (public contests)
 - `GET /contest/v1/contests/explore` (discovery feed)
 
@@ -573,7 +573,7 @@ Execution Service — SubmissionController
   │         └── Validate: contest is ACTIVE
   ├── Call Contest Service (via Eureka): GET /contest/v1/contests/{contestId}/participants/{userId}
   │         └── Validate: user is registered participant
-  ├── Call Contest Service (via Eureka): GET /contest/v1/problems/{problemId}/testcases
+  ├── Call Contest Service (via Eureka): GET /contest/v1/contests/{contestId}/problems/{problemId}/testcases
   │         └── Fetch hidden test cases for evaluation
   ├── Create Submission record { status: PENDING } in execution_db
   ├── Return HTTP 202 { submissionId }   ← API responds immediately, never blocks
@@ -706,7 +706,7 @@ Authenticated User (ROLE_STUDENT or ROLE_ORGANIZER)
   │
   │ Click "Host a Contest" in UI
   ▼
-Client → POST /auth/upgrade-to-organizer
+Client → PATCH /auth/upgrade-to-organizer
   │  (only called if user is currently ROLE_STUDENT)
   ▼
 Auth Service
@@ -875,15 +875,23 @@ Participant sees contest lobby / countdown timer
 ```
 ┌──────────────────────────────────────────────────────┐
 │                      problems                        │
+│   (scoped to a contest — no standalone library)      │
 ├───────────────┬──────────────────────────────────────┤
 │ id            │ UUID (PK)                             │
-│ title         │ VARCHAR(200)                          │
+│ contest_id    │ UUID FK → contests (NOT NULL)         │
+│ title         │ VARCHAR(200) (unique per contest)     │
 │ description   │ TEXT (Markdown)                       │
 │ difficulty    │ ENUM(EASY, MEDIUM, HARD)              │
 │ category      │ ENUM(ARRAYS, STRINGS, GRAPHS, ...)    │
 │ time_limit    │ INTEGER (seconds)                     │
 │ memory_limit  │ INTEGER (MB)                          │
-│ visibility    │ ENUM(PUBLIC, PRIVATE)                 │
+│ input_format  │ VARCHAR(2000)                         │
+│ output_format │ VARCHAR(2000)                         │
+│ constraints_text│ VARCHAR(2000)                       │
+│ explanation   │ TEXT (nullable)                       │
+│ tags          │ VARCHAR(500) (nullable)               │
+│ points        │ INTEGER (score within the contest)    │
+│ sequence_no   │ INTEGER (display order in contest)    │
 │ status        │ ENUM(DRAFT, PUBLISHED)                │
 │ created_by    │ UUID (user_id from auth_db, no FK)    │
 │ created_at    │ TIMESTAMP                             │
@@ -923,17 +931,6 @@ Participant sees contest lobby / countdown timer
 │ created_by    │ UUID (user_id from auth_db, no FK)    │
 │ created_at    │ TIMESTAMP                             │
 │ updated_at    │ TIMESTAMP                             │
-└──────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────┐
-│                  contest_problems                    │
-├───────────────┬──────────────────────────────────────┤
-│ id            │ UUID (PK)                             │
-│ contest_id    │ UUID FK → contests                    │
-│ problem_id    │ UUID FK → problems                    │
-│ points        │ INTEGER                               │
-│ sequence_no   │ INTEGER                               │
-│               │ UNIQUE(contest_id, problem_id)        │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
@@ -1160,7 +1157,7 @@ Contest Service (Scheduler Job)
 
 **Flow C — Protected API call (same for both flows):**
 ```
-[Client] ──GET /contest/v1/problems──► [API Gateway]
+[Client] ──GET /contest/v1/contests/{cId}/problems──► [API Gateway]
                                         │
                                   JwtValidationFilter:
                                   1. Extract Bearer token

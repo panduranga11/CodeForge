@@ -1,10 +1,14 @@
 # Low Level Design (LLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.0
+**Version:** 1.1
 **Status:** Draft
-**Date:** 2026-06-19
-**Based on:** HLD v1.5
+**Date:** 2026-06-25
+**Based on:** HLD v1.6
+
+**Changes:**
+- v1.0: Initial LLD aligned with HLD v1.5
+- v1.1: Scoped problems to contests — `Problem` gains `contest_id`, `points`, `sequenceNo` and drops `visibility`; removed `ContestProblem` entity/repository/table; nested problem API contracts and repositories under a contest; corrected Problem/Contest DTOs to match implementation; updated sequence diagrams and the Contest Hosting flow (Facade deferred to v2)
 
 ---
 
@@ -91,10 +95,11 @@ Indexes:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                           problems                               │
+│                  problems  (scoped to a contest)                 │
 ├──────────────────┬───────────────────────────────────────────────┤
 │ id               │ UUID  PK                                       │
-│ title            │ VARCHAR(200)  NOT NULL                         │
+│ contest_id       │ UUID  FK → contests.id  NOT NULL               │
+│ title            │ VARCHAR(200)  NOT NULL  (unique per contest)   │
 │ description      │ TEXT  NOT NULL  (Markdown)                     │
 │ difficulty       │ ENUM(EASY, MEDIUM, HARD)  NOT NULL             │
 │ category         │ ENUM(ARRAYS, STRINGS, LINKED_LIST, TREES,      │
@@ -103,12 +108,13 @@ Indexes:
 │                  │      MATH, SQL, SYSTEM_DESIGN, MISCELLANEOUS)  │
 │ time_limit       │ INTEGER  NOT NULL  (seconds, 1–10)             │
 │ memory_limit     │ INTEGER  NOT NULL  (MB, 16–512)                │
-│ input_format     │ TEXT  NOT NULL                                 │
-│ output_format    │ TEXT  NOT NULL                                 │
-│ constraints_text │ TEXT  NOT NULL                                 │
+│ input_format     │ VARCHAR(2000)  NOT NULL                        │
+│ output_format    │ VARCHAR(2000)  NOT NULL                        │
+│ constraints_text │ VARCHAR(2000)  NOT NULL                        │
 │ explanation      │ TEXT  NULL                                     │
 │ tags             │ VARCHAR(500)  NULL  (comma-separated, max 10)  │
-│ visibility       │ ENUM(PUBLIC, PRIVATE)  NOT NULL                │
+│ points           │ INTEGER  NOT NULL  (score within the contest)  │
+│ sequence_no      │ INTEGER  NOT NULL  (display order in contest)  │
 │ status           │ ENUM(DRAFT, PUBLISHED)  DEFAULT DRAFT          │
 │ created_by       │ UUID  NOT NULL  (user_id from auth_db, no FK)  │
 │ created_at       │ TIMESTAMP  NOT NULL                            │
@@ -152,22 +158,20 @@ Indexes:
 │ updated_at       │ TIMESTAMP  NOT NULL                            │
 │ deleted_at       │ TIMESTAMP  NULL  (soft delete)                 │
 └──────────────────────────────────────────────────────────────────┘
-         │ 1                                    │ 1
-         │                                      │
-         │ N                                    │ N
-┌──────────────────────────┐      ┌─────────────────────────────────┐
-│     contest_problems     │      │       contest_participants       │
-├──────────┬───────────────┤      ├──────────────┬──────────────────┤
-│ id       │ UUID  PK      │      │ id           │ UUID  PK         │
-│contest_id│ UUID  FK→     │      │ contest_id   │ UUID  FK→        │
-│          │ contests.id   │      │              │ contests.id      │
-│problem_id│ UUID  FK→     │      │ user_id      │ UUID  NOT NULL   │
-│          │ problems.id   │      │              │ (no FK cross-db) │
-│ points   │ INTEGER       │      │ registered_at│ TIMESTAMP        │
-│sequence_no│ INTEGER      │      │UNIQUE(contest_id, user_id)      │
-│UNIQUE(contest_id,        │      └─────────────────────────────────┘
-│  problem_id)             │
-└──────────────────────────┘
+                                               │ 1
+                                               │
+                                               │ N
+                                  ┌─────────────────────────────────┐
+                                  │       contest_participants       │
+                                  ├──────────────┬──────────────────┤
+                                  │ id           │ UUID  PK         │
+                                  │ contest_id   │ UUID  FK→        │
+                                  │              │ contests.id      │
+                                  │ user_id      │ UUID  NOT NULL   │
+                                  │              │ (no FK cross-db) │
+                                  │ registered_at│ TIMESTAMP        │
+                                  │UNIQUE(contest_id, user_id)      │
+                                  └─────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
 │                          leaderboard                             │
@@ -185,17 +189,15 @@ Indexes:
 └──────────────────────────────────────────────────────────────────┘
 
 Relationships:
+  contests       1──N  problems            (one contest owns many problems)
   problems       1──N  test_cases          (one problem, many test cases)
-  contests       1──N  contest_problems    (one contest, many problems via join)
-  problems       1──N  contest_problems    (one problem, used in many contests)
   contests       1──N  contest_participants (one contest, many participants)
   contests       1──N  leaderboard        (one contest, one row per participant)
 
 Indexes:
-  problems(created_by), problems(status), problems(visibility)
+  problems(contest_id), problems(status)
   test_cases(problem_id)
   contests(status), contests(invite_code), contests(host_id)
-  contest_problems(contest_id), contest_problems(problem_id)
   contest_participants(contest_id, user_id)
   leaderboard(contest_id, rank)
 ```
@@ -827,31 +829,32 @@ class ContestSchedulerService {
 #### DTOs (Contest Service, selection)
 
 ```java
-// Problem DTOs
+// Problem DTOs — problems are created within a contest (contestId from path)
 record CreateProblemRequest(
     @NotBlank @Size(min=5, max=200) String title,
-    @NotBlank                       String description,
-    @NotNull Difficulty             difficulty,
-    @NotNull ProblemCategory        category,
+    @NotBlank @Size(max=10000)      String description,
+    @NotNull String                 difficulty,     // EASY | MEDIUM | HARD
+    @NotNull String                 category,
     @Min(1) @Max(10) int            timeLimit,
     @Min(16) @Max(512) int          memoryLimit,
-    @NotBlank String                inputFormat,
-    @NotBlank String                outputFormat,
-    @NotBlank String                constraintsText,
+    @NotBlank @Size(max=2000) String inputFormat,
+    @NotBlank @Size(max=2000) String outputFormat,
+    @NotBlank @Size(max=2000) String constraintsText,
     String                          explanation,
-    List<String>                    tags,           // max 10
-    @NotNull Visibility             visibility
+    String                          tags,           // comma-separated, max 10
+    @Min(1) int                     points,
+    @Min(1) int                     sequenceNo
 ) {}
 
 record ProblemResponse(
-    UUID id, String title, String description,
+    UUID id, UUID contestId, String title, String description,
     String difficulty, String category,
     int timeLimit, int memoryLimit,
     String inputFormat, String outputFormat,
     String constraintsText, String explanation,
-    List<String> tags, String visibility, String status,
-    double acceptanceRate, int totalSubmissions,
-    List<TestCaseResponse> sampleTestCases   // SAMPLE only, never HIDDEN
+    String tags, int points, int sequenceNo, String status,
+    List<TestCaseResponse> sampleTestCases,  // SAMPLE only, never HIDDEN
+    LocalDateTime createdAt
 ) {}
 
 record CreateTestCaseRequest(
@@ -864,38 +867,31 @@ record CreateTestCaseRequest(
 // Contest DTOs
 record CreateContestRequest(
     @NotBlank @Size(min=5, max=200) String title,
-    @NotBlank String                description,
-    @NotNull @Future LocalDateTime  startTime,
+    @NotBlank @Size(max=5000) String description,
+    @NotNull LocalDateTime          startTime,
     @NotNull LocalDateTime          endTime,
-    @NotNull Visibility             visibility,
-    @NotNull RegType                regType,
-    Integer                         maxParticipants,    // optional
-    @NotNull ScoringMode            scoringMode
+    @NotNull String                 visibility,     // PUBLIC | PRIVATE
+    @NotNull String                 regType,        // OPEN | INVITE_ONLY
+    @NotNull String                 scoringMode,    // POINTS | PENALTY_TIME | PERCENTAGE
+    Integer                         maxParticipants // optional, null = unlimited
 ) {}
-
-record HostContestRequest(
-    @NotBlank @Size(min=5, max=200) String title,
-    @NotBlank String                description,
-    @NotNull @Future LocalDateTime  startTime,
-    @NotNull LocalDateTime          endTime,
-    @NotNull Visibility             visibility,
-    @NotNull RegType                regType,
-    Integer                         maxParticipants,
-    @NotNull ScoringMode            scoringMode
-) {}  // same as CreateContest; host endpoint auto-upgrades role
+// Note: the /contests/host endpoint reuses CreateContestRequest — no separate DTO.
 
 record ContestResponse(
     UUID id, String title, String description,
     LocalDateTime startTime, LocalDateTime endTime,
     String status, String visibility, String regType, String scoringMode,
-    int maxParticipants, String inviteCode, String inviteLink,
-    UUID hostId, int participantCount, int problemCount,
+    Integer maxParticipants, String inviteCode, String inviteLink,
+    UUID hostId, long participantCount, long problemCount,
     LocalDateTime createdAt
 ) {}
 
+record JoinContestRequest(
+    @NotBlank String inviteCode
+) {}
+
 record JoinContestResponse(
-    String message, UUID contestId,
-    LocalDateTime startTime, int problemCount
+    UUID contestId, String contestTitle, String message
 ) {}
 
 record LeaderboardResponse(
@@ -1469,7 +1465,7 @@ Client    API GW    Exec Svc     Contest Svc     RabbitMQ    Exec Worker    Kafk
   │          │          │─GET /contest/v1/contests/{id}/participants/{userId}   │           │
   │          │          │──────────────────────────►│              │           │           │
   │          │          │◄──────────── { registered: true }        │           │           │
-  │          │          │─GET /contest/v1/problems/{id}/testcases  │           │           │
+  │          │          │─GET /contest/v1/contests/{id}/problems/{pId}/testcases│           │
   │          │          │──────────────────────────►│              │           │           │
   │          │          │◄──────────── [testCases (HIDDEN)]        │           │           │
   │          │          │─INSERT submission {verdict:PENDING}       │           │           │
@@ -1603,8 +1599,8 @@ Client    API GW    AI Svc    ai_db    Exec Svc (internal)    LLM (OpenAI/Gemini
   │          │                 │─INSERT ai_reviews { status:PENDING }───►│
   │          │                 │─GET /exec/v1/submissions/{id}───────────────────────────►│
   │          │                 │◄───────────────────── { code, language, verdict } ───────│
-  │          │                 │─GET /contest/v1/problems/{problemId}                     │
-  │          │                 │  (internal call via Eureka)                              │
+  │          │                 │─GET /contest/v1/contests/{contestId}/problems/{problemId}│
+  │          │                 │  (internal call via Eureka; ids from submission record)  │
   │          │                 │─build prompt from code_review_prompt.st                 │
   │◄──────── 202 { reviewId, status:PENDING }                                            │
   │          │                 │─chatClient.call(prompt) [async]──────────────────────────►│
@@ -1821,9 +1817,12 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 
 ### 4.2 Contest Service — Problems
 
-#### POST /contest/v1/problems
+> Problems are nested under a contest. Only the contest host may create, update,
+> publish, or delete problems, and only while the contest is not ACTIVE/COMPLETED.
 
-**Headers:** `Authorization: Bearer <accessToken>` (ORGANIZER or ADMIN)
+#### POST /contest/v1/contests/{contestId}/problems
+
+**Headers:** `Authorization: Bearer <accessToken>` (contest host)
 
 **Request:**
 ```json
@@ -1838,8 +1837,9 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
   "outputFormat": "Two indices separated by space",
   "constraintsText": "1 ≤ N ≤ 10^4, -10^9 ≤ arr[i] ≤ 10^9",
   "explanation": "Optional walkthrough of sample",
-  "tags": ["hash-map", "arrays"],
-  "visibility": "PUBLIC"
+  "tags": "hash-map,arrays",
+  "points": 100,
+  "sequenceNo": 1
 }
 ```
 **Response 201:**
@@ -1847,13 +1847,51 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 {
   "success": true,
   "message": "Problem created",
-  "data": { "id": "uuid-...", "title": "Two Sum", "status": "DRAFT", ... }
+  "data": {
+    "id": "uuid-...",
+    "contestId": "uuid-contest-...",
+    "title": "Two Sum",
+    "points": 100,
+    "sequenceNo": 1,
+    "status": "DRAFT"
+  }
+}
+```
+| Error | Status | errorCode |
+|---|---|---|
+| Caller is not the host | 403 | `UNAUTHORIZED_ACCESS` |
+| Contest is ACTIVE/COMPLETED | 409 | `INVALID_CONTEST_STATE` |
+| Duplicate title in contest | 409 | `DUPLICATE_PROBLEM_TITLE` |
+
+---
+
+#### GET /contest/v1/contests/{contestId}/problems
+
+Returns the contest's problems ordered by `sequenceNo`. Host sees all; registered
+participants see only PUBLISHED problems during an ACTIVE contest.
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "uuid-...",
+      "contestId": "uuid-contest-...",
+      "title": "Two Sum",
+      "difficulty": "EASY",
+      "category": "ARRAYS",
+      "points": 100,
+      "sequenceNo": 1,
+      "status": "PUBLISHED"
+    }
+  ]
 }
 ```
 
 ---
 
-#### POST /contest/v1/problems/{id}/testcases
+#### POST /contest/v1/contests/{contestId}/problems/{problemId}/testcases
 
 **Request:**
 ```json
@@ -1871,7 +1909,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 
 ---
 
-#### PATCH /contest/v1/problems/{id}/publish
+#### PATCH /contest/v1/contests/{contestId}/problems/{problemId}/publish
 
 **Response 200:**
 ```json
@@ -1879,34 +1917,8 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 ```
 | Error | Status | errorCode |
 |---|---|---|
-| No hidden test case | 400 | `MISSING_HIDDEN_TEST_CASE` |
-| Not owner (non-admin) | 403 | `FORBIDDEN` |
-
----
-
-#### GET /contest/v1/problems
-
-**Query params:** `difficulty`, `category`, `q` (search), `page=0`, `size=20`
-
-**Response 200:**
-```json
-{
-  "success": true,
-  "data": {
-    "content": [
-      {
-        "id": "uuid-...",
-        "title": "Two Sum",
-        "difficulty": "EASY",
-        "category": "ARRAYS",
-        "acceptanceRate": 72.5,
-        "totalSubmissions": 1024
-      }
-    ],
-    "page": 0, "size": 20, "totalElements": 150, "totalPages": 8
-  }
-}
-```
+| No hidden test case | 409 | `INVALID_CONTEST_STATE` |
+| Caller is not the host | 403 | `UNAUTHORIZED_ACCESS` |
 
 ---
 
@@ -1916,7 +1928,9 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 
 **Headers:** `Authorization: Bearer <accessToken>` (any authenticated user)
 
-> If the caller has ROLE_STUDENT, the gateway/service auto-initiates the upgrade flow first.
+> The client calls `PATCH /auth/upgrade-to-organizer` first if the caller is still
+> ROLE_STUDENT, then calls this endpoint. The contest is created with the caller as host.
+> Reuses `CreateContestRequest` — there is no separate `HostContestRequest`.
 
 **Request:**
 ```json
@@ -1935,7 +1949,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 ```json
 {
   "success": true,
-  "message": "Contest created",
+  "message": "Contest hosted",
   "data": {
     "id": "uuid-contest-...",
     "inviteCode": "XF8K2P9A",
@@ -2460,48 +2474,41 @@ class LeaderboardServiceImpl implements LeaderboardService {
 
 ---
 
-### 5.5 Facade — Contest Workflow
+### 5.5 Contest Hosting Flow
 
-**Problem:** The `host` endpoint coordinates role upgrade (Auth), contest creation, and invite code generation — the controller should not know about this complexity.
+**Current implementation:** Role upgrade and contest creation are kept as two
+independent, client-orchestrated steps — this avoids a synchronous cross-service
+call from Contest Service back to Auth Service inside a request.
+
+```
+1. If caller is ROLE_STUDENT:
+      Client → PATCH /auth/upgrade-to-organizer   (Auth Service)
+             ← new { accessToken, refreshToken } with ROLE_ORGANIZER
+2. Client → POST /contest/v1/contests/host         (Contest Service)
+             ← contest { id, inviteCode, inviteLink, status: DRAFT }
+```
 
 ```java
-// Facade hides multi-step orchestration from the controller
-@Service
-class ContestHostingFacade {
-    private final UserServiceClient    authClient;    // Feign / RestTemplate to Auth Service
-    private final ContestService       contestService;
-
-    /**
-     * Handles:
-     * 1. Role upgrade if caller is STUDENT
-     * 2. Contest creation
-     * 3. Invite code + link generation
-     * Returns the new JWT + contestResponse in one call
-     */
-    public HostContestFacadeResponse hostContest(HostContestRequest req,
-                                                  UUID userId, String currentRole) {
-        TokenResponse newToken = null;
-        if ("ROLE_STUDENT".equals(currentRole)) {
-            newToken = authClient.upgradeToOrganizer(userId);
-        }
-        ContestResponse contest = contestService.host(req, userId);
-        return new HostContestFacadeResponse(newToken, contest);
-    }
-}
-
 @RestController
+@RequestMapping("/contest/v1/contests")
 class ContestController {
-    // Controller is thin — delegates entirely to facade
+    private final ContestService contestService;
+
+    // Thin controller — reuses CreateContestRequest; host is set from X-User-Id
     @PostMapping("/host")
-    public ResponseEntity<ApiResponse<HostContestFacadeResponse>> host(
-            @Valid @RequestBody HostContestRequest req,
+    public ResponseEntity<ApiResponse<ContestResponse>> host(
             @RequestHeader("X-User-Id") UUID userId,
-            @RequestHeader("X-User-Role") String role) {
+            @Valid @RequestBody CreateContestRequest req) {
         return ResponseEntity.status(201).body(
-            ApiResponse.success("Contest hosted", facade.hostContest(req, userId, role)));
+            ApiResponse.success("Contest hosted", contestService.create(req, userId)));
     }
 }
 ```
+
+> **Future enhancement (Facade):** When a server-side single-call host flow is
+> needed, introduce a `ContestHostingFacade` that calls Auth Service via a Feign
+> client to upgrade the role, then creates the contest — hiding the two-step
+> orchestration behind one endpoint. Not implemented in v1.
 
 ---
 
@@ -2654,7 +2661,7 @@ class ContestMapper {
 | **Chain of Responsibility** | Execution pipeline (5 steps) | Sequential validation with early exit on failure |
 | **Observer / Event-Driven** | Kafka producer + consumer groups | Decouple Execution Service from Leaderboard/Analytics updates |
 | **Cache-Aside** | Redis leaderboard, problem, status | Low-latency reads; invalidate on write |
-| **Facade** | `ContestHostingFacade` | Hide role-upgrade + contest-create + invite-code complexity |
+| **Facade** _(planned)_ | `ContestHostingFacade` | Hide role-upgrade + contest-create complexity (v2 — not in v1) |
 | **Template Method** | `AIProcessor<R,S>` | Shared LLM call skeleton; subclasses vary prompt + parse logic |
 | **Proxy / AOP** | `@RateLimited`, `@AuditLogging` | Rate limiting and audit logging without polluting business methods |
 | **Builder** | All response DTOs, `PipelineContext` | Readable construction of objects with many optional fields |

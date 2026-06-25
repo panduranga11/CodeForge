@@ -1,13 +1,14 @@
 # Functional Requirements Document (FRD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.3
+**Version:** 1.4
 **Status:** Draft
-**Date:** 2026-06-24
+**Date:** 2026-06-25
 **Changes:**
 - v1.1: Added self-service Host a Contest flow (FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011)
 - v1.2: Added OAuth2 authentication via Google and GitHub (FR-AUTH-009, FR-AUTH-010)
 - v1.3: Aligned all service references with v1.5 HLD architecture — replaced "Assessment Service" with "Contest Service" / "Execution Service" throughout traceability matrix; removed stale "organisation" references; updated FR-CONT-010 to allow join during ACTIVE state
+- v1.4: Scoped problems to contests (no standalone problem library); problems carry `points` + `sequenceNo` and a `contest_id`, `visibility` removed from problems; updated FR-PROB-001..007 and FR-CONT-002 actors to "Contest Host"; marked Problem/Contest requirements as Implemented
 
 ---
 
@@ -468,11 +469,11 @@ Contest hosts must be able to create coding problems within their contest. Probl
 |---|---|
 | **ID** | FR-PROB-002 |
 | **Title** | Add Test Cases |
-| **Actor** | Organizer, Admin |
+| **Actor** | Contest Host |
 | **Priority** | HIGH |
 
 **Description:**
-Organizers must be able to add hidden and visible test cases to a problem.
+The contest host must be able to add hidden and visible test cases to a problem in their contest.
 
 **Inputs per Test Case:**
 - Input data (required)
@@ -483,7 +484,7 @@ Organizers must be able to add hidden and visible test cases to a problem.
 **Acceptance Criteria:**
 - [ ] Minimum 1 hidden test case required to publish problem
 - [ ] Test case input/output stored securely (not exposed in API for HIDDEN type)
-- [ ] Organizer can add, edit, or delete test cases on problems they own
+- [ ] Only the contest host can add test cases to problems in their contest
 - [ ] Returns HTTP 201 with test case ID
 
 ---
@@ -494,11 +495,11 @@ Organizers must be able to add hidden and visible test cases to a problem.
 |---|---|
 | **ID** | FR-PROB-003 |
 | **Title** | Publish Problem |
-| **Actor** | Organizer, Admin |
+| **Actor** | Contest Host |
 | **Priority** | HIGH |
 
 **Description:**
-A problem must be explicitly published before it appears in contests or public listings.
+A problem must be explicitly published before its contest can be scheduled and before participants can see it during an ACTIVE contest.
 
 **Preconditions:**
 - Problem has at least 1 hidden test case
@@ -506,8 +507,9 @@ A problem must be explicitly published before it appears in contests or public l
 
 **Acceptance Criteria:**
 - [ ] Status changes from `DRAFT` → `PUBLISHED`
-- [ ] `PUBLISHED` problems are visible based on their `Visibility` setting
-- [ ] Published problems can still be edited (triggers re-review if test cases change)
+- [ ] Only the contest host can publish problems in their contest
+- [ ] A contest requires at least 1 `PUBLISHED` problem before it can be scheduled
+- [ ] Published problems can still be edited while the contest is not ACTIVE/COMPLETED
 
 ---
 
@@ -541,23 +543,23 @@ Users must be able to view problems within a specific contest. There is no stand
 |---|---|
 | **ID** | FR-PROB-005 |
 | **Title** | View Problem Detail |
-| **Actor** | Student, Organizer, Admin |
+| **Actor** | Contest Host, Registered Participant (during ACTIVE contest) |
 | **Priority** | HIGH |
 
 **Description:**
-Users must be able to view the full details of a published problem.
+Users must be able to view the full details of a problem within its contest.
 
 **Response includes:**
 - Title, description (rendered markdown), difficulty, category
 - Time limit, memory limit, constraints
 - Sample input/output with explanation
-- Tags
-- Acceptance rate and total submission count
+- Tags, points, sequence number
 
 **Acceptance Criteria:**
 - [ ] Hidden test cases are never included in the response
-- [ ] Returns HTTP 404 if problem is `DRAFT` or does not exist
-- [ ] Organizer can preview `DRAFT` problems they own
+- [ ] Returns HTTP 404 if problem does not exist in the given contest
+- [ ] Contest host can preview `DRAFT` problems in their contest
+- [ ] Participants can only view `PUBLISHED` problems during an ACTIVE contest
 
 ---
 
@@ -567,15 +569,15 @@ Users must be able to view the full details of a published problem.
 |---|---|
 | **ID** | FR-PROB-006 |
 | **Title** | Update Problem |
-| **Actor** | Organizer (owner), Admin |
+| **Actor** | Contest Host |
 | **Priority** | MEDIUM |
 
 **Description:**
-Organizers can update problems they created. Admins can update any problem.
+The contest host can update problems in their own contest.
 
 **Acceptance Criteria:**
-- [ ] Organizer cannot update problems belonging to other organizers (HTTP 403)
-- [ ] Changes to test cases of a `PUBLISHED` problem are logged with version info
+- [ ] Only the contest host can update problems in their contest (HTTP 403 otherwise)
+- [ ] Problems cannot be updated in an `ACTIVE` or `COMPLETED` contest
 - [ ] Returns HTTP 200 with updated problem
 
 ---
@@ -586,14 +588,14 @@ Organizers can update problems they created. Admins can update any problem.
 |---|---|
 | **ID** | FR-PROB-007 |
 | **Title** | Delete Problem |
-| **Actor** | Admin |
+| **Actor** | Contest Host |
 | **Priority** | LOW |
 
 **Description:**
-Admins can soft-delete problems. Problems used in active contests cannot be deleted.
+The contest host can soft-delete a problem from their contest while it is not ACTIVE/COMPLETED.
 
 **Acceptance Criteria:**
-- [ ] Problems with active contest associations cannot be deleted (HTTP 409)
+- [ ] Only the contest host can delete problems in their contest (HTTP 403 otherwise)
 - [ ] Soft delete sets `deletedAt` timestamp
 - [ ] Deleted problems disappear from listings but submission history is preserved
 
@@ -641,29 +643,27 @@ DRAFT → SCHEDULED → ACTIVE → COMPLETED
 
 ---
 
-### FR-CONT-002: Add Problems to Contest
+### FR-CONT-002: Manage Contest Problems
 
 | Field | Detail |
 |---|---|
 | **ID** | FR-CONT-002 |
-| **Title** | Add Problems to Contest |
-| **Actor** | Organizer, Admin |
+| **Title** | Manage Contest Problems |
+| **Actor** | Contest Host |
 | **Priority** | HIGH |
 
 **Description:**
-Organizers must be able to attach problems to a contest and assign point values.
+The contest host creates problems directly within their contest (see FR-PROB-001). Problems are created inline with their points and sequence number — there is no separate "attach existing problem" step, because problems do not exist outside a contest.
 
-**Inputs:**
-- Problem ID (must be `PUBLISHED`)
+**Inputs (per problem, at creation):**
 - Points assigned to this problem within the contest
 - Problem order/sequence number
 
 **Acceptance Criteria:**
-- [ ] Only `PUBLISHED` problems can be added to a contest
-- [ ] Minimum 1 problem required to schedule a contest
-- [ ] Maximum 20 problems per contest
-- [ ] Problems cannot be added to a `COMPLETED` or `ACTIVE` contest
-- [ ] Same problem cannot be added twice to the same contest
+- [ ] Problems are created within the contest by its host (contest_id FK)
+- [ ] Minimum 1 `PUBLISHED` problem required to schedule a contest
+- [ ] Problems cannot be created/edited in a `COMPLETED` or `ACTIVE` contest
+- [ ] Problem title must be unique within the contest
 
 ---
 
@@ -1421,15 +1421,15 @@ Students must have a personal dashboard showing their performance history.
 | FR-AUTH-008 | Self-Service Organizer Upgrade | Auth Service | HIGH | Planned |
 | **FR-AUTH-009** | **OAuth2 Login (Google / GitHub)** | **Auth Service** | **HIGH** | **Planned** |
 | **FR-AUTH-010** | **Link / Unlink OAuth Provider** | **Auth Service** | **MEDIUM** | **Planned** |
-| FR-PROB-001 | Create Problem | Contest Service | HIGH | Planned |
-| FR-PROB-002 | Add Test Cases | Contest Service | HIGH | Planned |
-| FR-PROB-003 | Publish Problem | Contest Service | HIGH | Planned |
-| FR-PROB-004 | List & Search Problems | Contest Service | HIGH | Planned |
-| FR-PROB-005 | View Problem Detail | Contest Service | HIGH | Planned |
-| FR-PROB-006 | Update Problem | Contest Service | MEDIUM | Planned |
-| FR-PROB-007 | Delete Problem | Contest Service | LOW | Planned |
-| FR-CONT-001 | Create Contest | Contest Service | HIGH | Planned |
-| FR-CONT-002 | Add Problems to Contest | Contest Service | HIGH | Planned |
+| FR-PROB-001 | Create Problem (within contest) | Contest Service | HIGH | Implemented |
+| FR-PROB-002 | Add Test Cases | Contest Service | HIGH | Implemented |
+| FR-PROB-003 | Publish Problem | Contest Service | HIGH | Implemented |
+| FR-PROB-004 | List Contest Problems | Contest Service | HIGH | Implemented |
+| FR-PROB-005 | View Problem Detail | Contest Service | HIGH | Implemented |
+| FR-PROB-006 | Update Problem | Contest Service | MEDIUM | Implemented |
+| FR-PROB-007 | Delete Problem | Contest Service | LOW | Implemented |
+| FR-CONT-001 | Create Contest | Contest Service | HIGH | Implemented |
+| FR-CONT-002 | Manage Contest Problems | Contest Service | HIGH | Implemented |
 | FR-CONT-003 | Schedule Contest | Contest Service | HIGH | Planned |
 | FR-CONT-004 | Cancel Contest | Contest Service | MEDIUM | Planned |
 | FR-CONT-005 | Participant Registration | Contest Service | HIGH | Planned |
