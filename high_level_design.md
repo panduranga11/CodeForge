@@ -600,7 +600,7 @@ Execution Service — SubmissionController
             ├── Update Submission record { verdict, time, memory } in execution_db
             │
             └── Publish to Kafka: topic → "submission.completed"
-                      { submissionId, userId, contestId, problemId, verdict, score }
+                      { submissionId, userId, contestId, problemId, verdict, score, executionTime }
                       │
             ┌─────────┴──────────────────────────────────────┐
             ▼                                                ▼
@@ -1073,6 +1073,9 @@ RabbitMQ buffers submission spikes between the Execution Service API and its own
 | Queue | Producer | Consumer | Purpose |
 |---|---|---|---|
 | `submission.queue` | SubmissionController | ExecutionService (worker) | Decouple API intake from Docker sandbox execution |
+| `submission.dlq` | RabbitMQ (auto-routed on failure) | Manual / alerting | Dead Letter Queue — captures messages that failed 3 retries |
+
+Retry policy: 3 attempts with exponential backoff. A `StaleSubmissionSweeper` (scheduled every 60s) marks `PENDING` submissions older than 5 minutes as `FAILED`.
 
 ### 9.2 Kafka — Cross-Service Event Streaming
 
@@ -1092,7 +1095,7 @@ Execution Service (Worker)
     ├── Update submission record in execution_db
     │
     └── Publish to Kafka: topic → "submission.completed"
-              { submissionId, userId, contestId, problemId, verdict, score }
+              { submissionId, userId, contestId, problemId, verdict, score, executionTime }
               │
     ┌─────────┴──────────────────────────────────┐
     ▼                                            ▼

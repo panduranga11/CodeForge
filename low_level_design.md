@@ -1,14 +1,15 @@
 # Low Level Design (LLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.1
+**Version:** 1.2
 **Status:** Draft
-**Date:** 2026-06-25
+**Date:** 2026-06-26
 **Based on:** HLD v1.6
 
 **Changes:**
 - v1.0: Initial LLD aligned with HLD v1.5
 - v1.1: Scoped problems to contests — `Problem` gains `contest_id`, `points`, `sequenceNo` and drops `visibility`; removed `ContestProblem` entity/repository/table; nested problem API contracts and repositories under a contest; corrected Problem/Contest DTOs to match implementation; updated sequence diagrams and the Contest Hosting flow (Facade deferred to v2)
+- v1.2: Execution Service hardening — removed `problemsSolved` from `SubmissionCompletedEvent` (computed by leaderboard consumer); added `@Size(max=50000)` to `sourceCode`; simplified `TestCaseDto` (removed per-test-case limits, added `scoreWeight`); added DLQ + retry policy for RabbitMQ; added stale submission sweeper
 
 ---
 
@@ -1124,6 +1125,21 @@ class ExecutionWorker {
     }
 }
 
+// ── RabbitMQ DLQ & Retry Policy (configured in RabbitMQConfig)
+// submission.queue → on failure → retry up to 3 times (exponential backoff)
+//                  → after 3 failures → route to submission.dlq (Dead Letter Queue)
+// submission.dlq   → monitored for manual inspection / alerting
+//
+// ── Stale Submission Sweeper
+@Service
+class StaleSubmissionSweeper {
+    @Scheduled(fixedRate = 60_000)  // every 60 seconds
+    void markStaleSubmissions() {
+        // Find submissions with verdict=PENDING and submittedAt < now - 5 minutes
+        // Update verdict to FAILED, errorMessage = "Execution timed out"
+    }
+}
+
 // ── Kafka Event
 record SubmissionCompletedEvent(
     UUID    submissionId,
@@ -1131,10 +1147,11 @@ record SubmissionCompletedEvent(
     UUID    contestId,
     UUID    problemId,
     String  verdict,
-    int     score,
-    int     executionTime,
-    int     problemsSolved   // for leaderboard delta
+    int     score,           // points for this problem (from Problem entity)
+    int     executionTime    // ms
 ) {}
+// Note: problemsSolved is computed by LeaderboardService (contest-service),
+// NOT by the Execution Service — it requires contest-wide state.
 ```
 
 #### DTOs (Execution Service)
@@ -1144,7 +1161,7 @@ record CreateSubmissionRequest(
     @NotNull UUID   problemId,
     UUID            contestId,       // optional (practice submission)
     @NotNull Language language,
-    @NotBlank String sourceCode
+    @NotBlank @Size(max = 50000) String sourceCode   // ~50KB cap
 ) {}
 
 record SubmissionResponse(
@@ -1164,8 +1181,7 @@ record TestCaseDto(
     UUID   id,
     String input,
     String expectedOutput,
-    int    timeLimitMs,
-    int    memoryLimitMB
+    int    scoreWeight       // per-test-case weight; time/memory limits are on PipelineContext
 ) {}
 ```
 

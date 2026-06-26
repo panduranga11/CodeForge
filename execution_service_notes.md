@@ -33,7 +33,9 @@
 | 6 | No `@Valid` on `SubmissionRequest` | Add Bean Validation annotations |
 | 7 | `@CrossOrigin("http://localhost:5173")` hardcoded | Remove — CORS handled at API Gateway |
 | 8 | DB password hardcoded in `application.properties` | Move to environment variables |
-| 9 | Kafka event payload doesn't match LLD `SubmissionCompletedEvent` schema | Update payload to include `submissionId, userId, contestId, problemId, verdict, score, executionTime, problemsSolved` |
+| 9 | Kafka event payload doesn't match LLD `SubmissionCompletedEvent` schema | Update payload to include `submissionId, userId, contestId, problemId, verdict, score, executionTime` (`problemsSolved` removed — computed by leaderboard consumer) |
+| 10 | No Dead Letter Queue for failed executions | Add `submission.dlq` with 3-retry policy + `StaleSubmissionSweeper` for PENDING submissions older than 5 min |
+| 11 | No source code size limit | Add `@Size(max=50000)` to `sourceCode` in `CreateSubmissionRequest` |
 
 ---
 
