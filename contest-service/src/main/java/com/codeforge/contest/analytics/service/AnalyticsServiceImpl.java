@@ -8,6 +8,8 @@ import com.codeforge.contest.contest.repository.ContestParticipantRepository;
 import com.codeforge.contest.contest.repository.ContestRepository;
 import com.codeforge.contest.problem.entity.Problem;
 import com.codeforge.contest.problem.repository.ProblemRepository;
+import com.codeforge.contest.shared.config.CacheService;
+import com.codeforge.contest.shared.event.SubmissionCompletedEvent;
 import com.codeforge.contest.shared.exception.ContestNotFoundException;
 import com.codeforge.contest.shared.exception.UnauthorizedAccessException;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +17,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -24,9 +28,13 @@ import java.util.UUID;
 @Slf4j
 public class AnalyticsServiceImpl implements AnalyticsService {
 
+    private static final String DASHBOARD_CACHE_KEY = "user:dashboard:%s";
+    private static final Duration DASHBOARD_CACHE_TTL = Duration.ofMinutes(2);
+
     private final ContestRepository contestRepository;
     private final ContestParticipantRepository participantRepository;
     private final ProblemRepository problemRepository;
+    private final CacheService cacheService;
 
     @Override
     public ContestAnalyticsResponse getContestAnalytics(UUID contestId, UUID requesterId) {
@@ -60,7 +68,24 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
     @Override
     public UserDashboardResponse getUserDashboard(UUID userId) {
+        Optional<UserDashboardResponse> cached = cacheService.get(
+                String.format(DASHBOARD_CACHE_KEY, userId), UserDashboardResponse.class);
+        if (cached.isPresent()) {
+            log.debug("Cache hit for user dashboard {}", userId);
+            return cached.get();
+        }
+
         long contestsParticipated = participantRepository.countByContestId(userId);
-        return new UserDashboardResponse(contestsParticipated, 0, 0);
+        UserDashboardResponse response = new UserDashboardResponse(contestsParticipated, 0, 0);
+        cacheService.put(String.format(DASHBOARD_CACHE_KEY, userId), response, DASHBOARD_CACHE_TTL);
+        return response;
+    }
+
+    @Override
+    @Transactional
+    public void updateProblemStats(SubmissionCompletedEvent event) {
+        log.info("Analytics: processing submission {} for problem {} verdict={}",
+                event.getSubmissionId(), event.getProblemId(), event.getVerdict());
+        cacheService.evict(String.format(DASHBOARD_CACHE_KEY, event.getUserId()));
     }
 }

@@ -26,6 +26,8 @@ public interface ContestService {
 
     JoinContestResponse join(JoinContestRequest request, UUID userId);
 
+    boolean isParticipant(UUID contestId, UUID userId);
+
     void activate(UUID contestId);
 
     void complete(UUID contestId);

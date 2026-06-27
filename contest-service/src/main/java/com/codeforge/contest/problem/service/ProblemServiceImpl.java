@@ -8,14 +8,17 @@ import com.codeforge.contest.problem.entity.*;
 import com.codeforge.contest.problem.mapper.ProblemMapper;
 import com.codeforge.contest.problem.repository.ProblemRepository;
 import com.codeforge.contest.problem.repository.TestCaseRepository;
+import com.codeforge.contest.shared.config.CacheService;
 import com.codeforge.contest.shared.exception.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -24,10 +27,14 @@ import java.util.UUID;
 @Slf4j
 public class ProblemServiceImpl implements ProblemService {
 
+    private static final String PROBLEM_CACHE_KEY = "problem:%s";
+    private static final Duration PROBLEM_CACHE_TTL = Duration.ofMinutes(10);
+
     private final ProblemRepository problemRepository;
     private final TestCaseRepository testCaseRepository;
     private final ContestRepository contestRepository;
     private final ProblemMapper problemMapper;
+    private final CacheService cacheService;
 
     @Override
     public ProblemResponse create(UUID contestId, CreateProblemRequest request, UUID userId) {
@@ -64,8 +71,17 @@ public class ProblemServiceImpl implements ProblemService {
     @Override
     @Transactional(readOnly = true)
     public ProblemResponse getById(UUID contestId, UUID problemId) {
+        Optional<ProblemResponse> cached = cacheService.get(
+                String.format(PROBLEM_CACHE_KEY, problemId), ProblemResponse.class);
+        if (cached.isPresent()) {
+            log.debug("Cache hit for problem {}", problemId);
+            return cached.get();
+        }
+
         Problem problem = findProblemInContest(contestId, problemId);
-        return problemMapper.toResponse(problem);
+        ProblemResponse response = problemMapper.toResponse(problem);
+        cacheService.put(String.format(PROBLEM_CACHE_KEY, problemId), response, PROBLEM_CACHE_TTL);
+        return response;
     }
 
     @Override
@@ -97,6 +113,7 @@ public class ProblemServiceImpl implements ProblemService {
         if (request.sequenceNo() != null) problem.setSequenceNo(request.sequenceNo());
 
         problem = problemRepository.save(problem);
+        cacheService.evict(String.format(PROBLEM_CACHE_KEY, problemId));
         log.info("Problem updated id={} in contest={}", problemId, contestId);
         return problemMapper.toResponse(problem);
     }
@@ -134,8 +151,26 @@ public class ProblemServiceImpl implements ProblemService {
 
         problem.setStatus(ProblemStatus.PUBLISHED);
         problem = problemRepository.save(problem);
+        cacheService.evict(String.format(PROBLEM_CACHE_KEY, problemId));
         log.info("Problem published id={} in contest={}", problemId, contestId);
         return problemMapper.toResponse(problem);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TestCaseResponse> getTestCases(UUID contestId, UUID problemId, String type) {
+        findProblemInContest(contestId, problemId);
+
+        List<TestCase> testCases;
+        if (type != null) {
+            testCases = testCaseRepository.findByProblemIdAndType(problemId, TestCaseType.valueOf(type));
+        } else {
+            testCases = testCaseRepository.findByProblemId(problemId);
+        }
+
+        return testCases.stream()
+                .map(problemMapper::toTestCaseResponse)
+                .toList();
     }
 
     @Override
@@ -144,6 +179,7 @@ public class ProblemServiceImpl implements ProblemService {
         Problem problem = findProblemInContest(contestId, problemId);
         problem.setDeletedAt(LocalDateTime.now());
         problemRepository.save(problem);
+        cacheService.evict(String.format(PROBLEM_CACHE_KEY, problemId));
         log.info("Problem soft-deleted id={} in contest={}", problemId, contestId);
     }
 
