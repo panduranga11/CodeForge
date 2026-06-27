@@ -1,14 +1,15 @@
 # Functional Requirements Document (FRD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.4
+**Version:** 1.5
 **Status:** Draft
-**Date:** 2026-06-25
+**Date:** 2026-06-27
 **Changes:**
 - v1.1: Added self-service Host a Contest flow (FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011)
 - v1.2: Added OAuth2 authentication via Google and GitHub (FR-AUTH-009, FR-AUTH-010)
 - v1.3: Aligned all service references with v1.5 HLD architecture — replaced "Assessment Service" with "Contest Service" / "Execution Service" throughout traceability matrix; removed stale "organisation" references; updated FR-CONT-010 to allow join during ACTIVE state
 - v1.4: Scoped problems to contests (no standalone problem library); problems carry `points` + `sequenceNo` and a `contest_id`, `visibility` removed from problems; updated FR-PROB-001..007 and FR-CONT-002 actors to "Contest Host"; marked Problem/Contest requirements as Implemented
+- v1.5: Aligned with actual execution service implementation — code size limit updated to 64KB; execution uses ProcessBuilder with security validation (Docker sandbox planned); rate limit updated to 10/10min; leaderboard uses Redis sorted sets + WebSocket; marked FR-SUB-001..006, FR-LEAD-001, FR-ANAL-002 as Implemented
 
 ---
 
@@ -990,11 +991,11 @@ Registered participants must be able to submit a code solution for a problem.
 10. System publishes `SubmissionCompleted` event
 
 **Acceptance Criteria:**
-- [ ] Submission accepted with HTTP 202 (Accepted) and submission ID
-- [ ] Submissions blocked after contest end time (HTTP 409)
-- [ ] Unauthenticated users cannot submit (HTTP 401)
-- [ ] Non-participants cannot submit to a contest (HTTP 403)
-- [ ] Code size limit: 100 KB per submission
+- [x] Submission accepted with HTTP 202 (Accepted) and submission ID
+- [x] Submissions blocked after contest end time (HTTP 409)
+- [x] Unauthenticated users cannot submit (HTTP 401)
+- [x] Non-participants cannot submit to a contest (HTTP 403)
+- [x] Code size limit: 64 KB per submission (Codeforces standard)
 
 ---
 
@@ -1022,12 +1023,12 @@ The execution engine must automatically evaluate submitted code against all test
 | Memory Limit Exceeded | `MLE` | Memory usage exceeds problem memory limit |
 
 **Acceptance Criteria:**
-- [ ] Compilation errors return the compiler error message (sanitized, no system paths)
-- [ ] Each test case result (pass/fail) stored individually
-- [ ] Final verdict is the first non-AC result, or `AC` if all pass
-- [ ] Execution runs in isolated sandbox (no network, no filesystem access)
-- [ ] Memory and CPU limits strictly enforced per test case
-- [ ] Maximum execution timeout: problem time limit + 2 seconds (grace)
+- [x] Compilation errors return the compiler error message
+- [x] Each test case result (pass/fail) stored individually
+- [x] Final verdict is the first non-AC result, or `AC` if all pass
+- [x] Execution uses ProcessBuilder with security validation (banned-pattern checks per language); Docker sandbox planned for v2
+- [x] Time limits enforced via ProcessBuilder timeout with language multipliers (C++ 1x, Java 2x, JS 2.5x, Python 3x)
+- [x] Maximum execution timeout: problem time limit × language multiplier
 
 ---
 
@@ -1051,9 +1052,9 @@ The execution engine must support the following languages in v1.0.
 | JavaScript | Node 18 | `JavaScriptExecutor` |
 
 **Acceptance Criteria:**
-- [ ] Unsupported language returns HTTP 400
-- [ ] Language-specific compilation and execution commands are configurable
-- [ ] Each executor implements the `LanguageExecutor` strategy interface
+- [x] Unsupported language returns HTTP 400
+- [x] Language-specific compilation and execution commands are configurable
+- [x] Each executor implements the `LanguageExecutor` strategy interface
 
 ---
 
@@ -1076,10 +1077,10 @@ Users must be able to view the result of their own submission.
 - Compilation error message (if `CE`)
 
 **Acceptance Criteria:**
-- [ ] Students can only view their own submissions (HTTP 403 for others')
-- [ ] Organizers can view all submissions within their own hosted contests
-- [ ] Admins can view all submissions
-- [ ] Hidden test case input/output values never returned
+- [x] Students can only view their own submissions (HTTP 403 for others')
+- [ ] Organizers can view all submissions within their own hosted contests (access control pending)
+- [ ] Admins can view all submissions (access control pending)
+- [x] Hidden test case input/output values never returned
 
 ---
 
@@ -1106,9 +1107,9 @@ Users must be able to view their full submission history.
 - Each item: problem title, language, verdict, execution time, submitted at
 
 **Acceptance Criteria:**
-- [ ] Returns only the authenticated user's submissions
-- [ ] Paginated (default 20 per page)
-- [ ] Returns HTTP 200 with empty list if no submissions match filter
+- [x] Returns only the authenticated user's submissions
+- [x] Paginated (default 20 per page)
+- [x] Returns HTTP 200 with empty list if no submissions match filter
 
 ---
 
@@ -1125,13 +1126,12 @@ Users must be able to view their full submission history.
 The system must prevent excessive submissions to avoid abuse.
 
 **Limits:**
-- Maximum 5 submissions per user per problem within any 5-minute window (during contest)
-- Maximum 20 submissions per user per problem per contest
+- Maximum 10 submissions per user within any 10-minute window (Codeforces-style)
 
 **Acceptance Criteria:**
-- [ ] Returns HTTP 429 when rate limit is exceeded
-- [ ] Rate limit state stored in Redis
-- [ ] Rate limit resets after window expires
+- [x] Returns HTTP 429 when rate limit is exceeded
+- [x] Rate limit state stored in Redis (with DB fallback if Redis unavailable)
+- [x] Rate limit resets after window expires
 
 ---
 
@@ -1166,11 +1166,13 @@ The system must provide a real-time leaderboard for active and completed contest
 - Time of last accepted submission
 
 **Acceptance Criteria:**
-- [ ] Leaderboard updates within 5 seconds of a submission verdict
-- [ ] Leaderboard cached in Redis; cache invalidated on new `AC` submission
-- [ ] Returns paginated results (default 50 per page)
-- [ ] Supports sorting by rank
-- [ ] Accessible during `ACTIVE` and `COMPLETED` contest states
+- [x] Leaderboard updates in real-time via Kafka consumer on submission verdict
+- [x] Leaderboard stored in Redis sorted sets (ZINCRBY for score, ZREVRANGEBYSCORE for reads); PostgreSQL as source of truth
+- [x] Duplicate solve prevention via Redis sets (SISMEMBER/SADD per user per problem)
+- [x] Live broadcast to connected clients via WebSocket (STOMP → /topic/leaderboard/{contestId})
+- [x] Returns paginated results (default 50 per page)
+- [x] Supports sorting by rank
+- [x] Accessible during `ACTIVE` and `COMPLETED` contest states
 
 ---
 
@@ -1401,9 +1403,9 @@ Students must have a personal dashboard showing their performance history.
 - Streak tracking (consecutive daily submissions)
 
 **Acceptance Criteria:**
-- [ ] Dashboard only shows authenticated user's own data
-- [ ] Returns HTTP 200 with structured stats object
-- [ ] Cached and refreshed on new submission completion
+- [x] Dashboard only shows authenticated user's own data
+- [x] Returns HTTP 200 with structured stats object
+- [x] Cached in Redis (2-min TTL) and evicted on new submission completion via Kafka analytics consumer
 
 ---
 
@@ -1439,13 +1441,13 @@ Students must have a personal dashboard showing their performance history.
 | FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Contest Service | HIGH | Planned |
 | FR-CONT-010 | Join via Invite Link / Code | Contest Service | HIGH | Planned |
 | FR-CONT-011 | Public Contest Discovery | Contest Service | HIGH | Planned |
-| FR-SUB-001 | Submit Code | Execution Service | HIGH | Planned |
-| FR-SUB-002 | Verdict Generation | Execution Engine | HIGH | Planned |
-| FR-SUB-003 | Language Support | Execution Engine | HIGH | Planned |
-| FR-SUB-004 | View Submission Result | Execution Service | HIGH | Planned |
-| FR-SUB-005 | Submission History | Execution Service | MEDIUM | Planned |
-| FR-SUB-006 | Rate Limiting | Execution Service + Redis | MEDIUM | Planned |
-| FR-LEAD-001 | Contest Leaderboard | Contest Service | HIGH | Planned |
+| FR-SUB-001 | Submit Code | Execution Service | HIGH | Implemented |
+| FR-SUB-002 | Verdict Generation | Execution Engine | HIGH | Implemented |
+| FR-SUB-003 | Language Support | Execution Engine | HIGH | Implemented |
+| FR-SUB-004 | View Submission Result | Execution Service | HIGH | Implemented |
+| FR-SUB-005 | Submission History | Execution Service | MEDIUM | Implemented |
+| FR-SUB-006 | Rate Limiting | Execution Service + Redis | MEDIUM | Implemented |
+| FR-LEAD-001 | Contest Leaderboard | Contest Service | HIGH | Implemented |
 | FR-LEAD-002 | Global Leaderboard | Contest Service | MEDIUM | Planned |
 | FR-AI-001 | AI Code Review | AI Service | HIGH | Planned |
 | FR-AI-002 | Complexity Analysis | AI Service | HIGH | Planned |
@@ -1453,7 +1455,7 @@ Students must have a personal dashboard showing their performance history.
 | FR-AI-004 | Learning Roadmap | AI Service | MEDIUM | Planned |
 | FR-AI-005 | Interview Prep Questions | AI Service | LOW | Planned |
 | FR-ANAL-001 | Contest Analytics | Contest Service | MEDIUM | Planned |
-| FR-ANAL-002 | User Performance Dashboard | Contest Service | MEDIUM | Planned |
+| FR-ANAL-002 | User Performance Dashboard | Contest Service | MEDIUM | Implemented |
 
 ---
 
@@ -1470,7 +1472,9 @@ Students must have a personal dashboard showing their performance history.
 | 1.1 | 2026-06-18 | Added self-service Host a Contest flow: FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011; updated Actors table and RBAC matrix |
 | 1.2 | 2026-06-18 | Added OAuth2 authentication: FR-AUTH-009 (OAuth Login), FR-AUTH-010 (Link/Unlink Provider); updated FR-AUTH-001 and FR-AUTH-002 to include OAuth paths |
 | 1.3 | 2026-06-24 | Aligned with HLD v1.5: replaced all "Assessment Service" → "Contest Service"/"Execution Service"; removed stale org references; updated FR-CONT-010 join conditions |
+| 1.4 | 2026-06-25 | Scoped problems to contests; marked Problem/Contest requirements as Implemented |
+| 1.5 | 2026-06-27 | Aligned with execution service implementation: code size 64KB, ProcessBuilder execution, rate limit 10/10min, Redis sorted sets + WebSocket leaderboard; marked FR-SUB-*, FR-LEAD-001, FR-ANAL-002 as Implemented |
 
 ---
 
-*Document Version: 1.3 | CodeForge Platform*
+*Document Version: 1.5 | CodeForge Platform*

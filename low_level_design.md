@@ -1,15 +1,16 @@
 # Low Level Design (LLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.2
+**Version:** 1.3
 **Status:** Draft
-**Date:** 2026-06-26
-**Based on:** HLD v1.6
+**Date:** 2026-06-27
+**Based on:** HLD v1.7
 
 **Changes:**
 - v1.0: Initial LLD aligned with HLD v1.5
 - v1.1: Scoped problems to contests — `Problem` gains `contest_id`, `points`, `sequenceNo` and drops `visibility`; removed `ContestProblem` entity/repository/table; nested problem API contracts and repositories under a contest; corrected Problem/Contest DTOs to match implementation; updated sequence diagrams and the Contest Hosting flow (Facade deferred to v2)
 - v1.2: Execution Service hardening — removed `problemsSolved` from `SubmissionCompletedEvent` (computed by leaderboard consumer); added `@Size(max=50000)` to `sourceCode`; simplified `TestCaseDto` (removed per-test-case limits, added `scoreWeight`); added DLQ + retry policy for RabbitMQ; added stale submission sweeper
+- v1.3: Aligned with actual implementation — RestTemplate replaced with OpenFeign (`ContestServiceClient`); leaderboard entity gains `solvedProblemIds` column; Kafka consumers split into `LeaderboardKafkaConsumer` and `AnalyticsKafkaConsumer`; added `CacheService`, `RedisConfig`, `WebSocketConfig` to contest service; execution uses ProcessBuilder (not Docker); rate limit 10/10min; `SubmissionMessage` gains `points` field; `StaleSubmissionSweeper` marks as RE not FAILED; updated sequence diagram to show OpenFeign and ProcessBuilder
 
 ---
 
@@ -184,6 +185,7 @@ Indexes:
 │ score            │ INTEGER  DEFAULT 0                             │
 │ penalty_time     │ INTEGER  DEFAULT 0  (minutes)                  │
 │ problems_solved  │ INTEGER  DEFAULT 0                             │
+│ solved_problem_ids│ VARCHAR(2000) NULL  (comma-separated UUIDs)   │
 │ last_ac_time     │ TIMESTAMP  NULL                                │
 │ updated_at       │ TIMESTAMP  NOT NULL                            │
 │                  │ UNIQUE(contest_id, user_id)                    │
@@ -675,9 +677,13 @@ class Leaderboard {
     int           score;
     int           penaltyTime;   // minutes
     int           problemsSolved;
+    String        solvedProblemIds; // comma-separated UUIDs (VARCHAR 2000)
     LocalDateTime lastAcTime;    // nullable
     LocalDateTime updatedAt;
     // UNIQUE(contest_id, user_id)
+
+    boolean hasAlreadySolved(UUID problemId);  // checks solvedProblemIds
+    void    addSolvedProblem(UUID problemId);  // appends to solvedProblemIds
 }
 
 // Enumerations
@@ -771,7 +777,12 @@ interface ContestService {
 interface LeaderboardService {
     Page<LeaderboardResponse>  getContestLeaderboard(UUID contestId, Pageable p);
     Page<LeaderboardResponse>  getGlobalLeaderboard(Pageable p);
+    boolean                    isParticipant(UUID contestId, UUID userId);
     // Kafka consumer — called internally
+    // Uses Redis sorted sets (ZINCRBY for score, ZREVRANGEBYSCORE for reads)
+    // Uses Redis sets for solved-problem deduplication (SISMEMBER/SADD)
+    // Broadcasts changes via SimpMessagingTemplate → /topic/leaderboard/{contestId}
+    // PostgreSQL is source of truth; Redis is the fast-read layer
     void                       updateOnSubmission(SubmissionCompletedEvent event);
 }
 
@@ -783,27 +794,75 @@ interface AnalyticsService {
 }
 ```
 
-#### Kafka Consumer (Contest Service)
+#### Kafka Consumers (Contest Service)
 
 ```java
+// ── LeaderboardKafkaConsumer — separate class, separate consumer group
 @Service
-class ContestKafkaConsumer {
+class LeaderboardKafkaConsumer {
+    private final LeaderboardService leaderboardService;
 
-    @KafkaListener(
-        topics = "submission.completed",
-        groupId = "leaderboard-group"
-    )
-    void handleSubmissionForLeaderboard(SubmissionCompletedEvent event) {
+    @KafkaListener(topics = "submission.completed", groupId = "leaderboard-group")
+    void onSubmission(SubmissionCompletedEvent event) {
+        if (!"AC".equals(event.getVerdict())) return;  // ignore non-AC
         leaderboardService.updateOnSubmission(event);
     }
+}
 
-    @KafkaListener(
-        topics = "submission.completed",
-        groupId = "analytics-group"
-    )
-    void handleSubmissionForAnalytics(SubmissionCompletedEvent event) {
+// ── AnalyticsKafkaConsumer — separate class, separate consumer group
+@Service
+class AnalyticsKafkaConsumer {
+    private final AnalyticsService analyticsService;
+
+    @KafkaListener(topics = "submission.completed", groupId = "analytics-group")
+    void onSubmission(SubmissionCompletedEvent event) {
         analyticsService.updateProblemStats(event);
     }
+}
+
+// ── SubmissionCompletedEvent — POJO (not record) for Kafka JSON deserialization
+@Data @NoArgsConstructor @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
+class SubmissionCompletedEvent {
+    UUID   submissionId;
+    UUID   userId;
+    UUID   contestId;
+    UUID   problemId;
+    String verdict;
+    int    score;
+    int    executionTime;
+}
+```
+
+#### Shared Config (Contest Service)
+
+```java
+// ── CacheService — generic Redis cache utility
+@Service
+class CacheService {
+    private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;  // configured with JavaTimeModule
+
+    <T> void put(String key, T value, Duration ttl);
+    <T> T    get(String key, Class<T> clazz);
+    <T> T    get(String key, TypeReference<T> typeRef);
+    void     evict(String key);
+    void     evictPattern(String pattern);
+}
+
+// ── RedisConfig
+@Configuration
+class RedisConfig {
+    @Bean RedisTemplate<String, String> redisTemplate(RedisConnectionFactory factory);
+    // Uses StringRedisSerializer for keys and values
+}
+
+// ── WebSocketConfig — STOMP for live leaderboard broadcast
+@Configuration @EnableWebSocketMessageBroker
+class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+    // STOMP endpoint: /ws/leaderboard (with SockJS fallback)
+    // Broker prefix: /topic
+    // App destination prefix: /app
 }
 ```
 
@@ -976,8 +1035,8 @@ interface LanguageExecutor {
 @Component
 class JavaExecutor implements LanguageExecutor {
     Language getLanguage() { return Language.JAVA; }
-    // Runs: javac Main.java inside Docker sandbox (no network, no file I/O)
-    // Executes: java -Xmx{mem}m Main
+    // Compiles: javac Solution.java via ProcessBuilder
+    // Executes: java -Xmx{mem}m Solution via ProcessBuilder with timeout
 }
 
 // ── PythonExecutor
@@ -985,15 +1044,15 @@ class JavaExecutor implements LanguageExecutor {
 class PythonExecutor implements LanguageExecutor {
     Language getLanguage() { return Language.PYTHON; }
     // No compile step
-    // Executes: python3 solution.py (restricted: no os, no subprocess)
+    // Executes: python solution.py via ProcessBuilder with timeout
 }
 
 // ── CppExecutor
 @Component
 class CppExecutor implements LanguageExecutor {
     Language getLanguage() { return Language.CPP; }
-    // Compiles: g++ -O2 -o main main.cpp
-    // Executes: ./main (no network)
+    // Compiles: g++ -O2 -o solution solution.cpp via ProcessBuilder
+    // Executes: ./solution via ProcessBuilder with timeout
 }
 
 // ── JavaScriptExecutor
@@ -1001,7 +1060,7 @@ class CppExecutor implements LanguageExecutor {
 class JavaScriptExecutor implements LanguageExecutor {
     Language getLanguage() { return Language.JAVASCRIPT; }
     // No compile step
-    // Executes: node solution.js (restricted: no fs, no child_process)
+    // Executes: node solution.js via ProcessBuilder with timeout
 }
 
 // ── ExecutorFactory (Factory Pattern via Spring DI)
@@ -1045,7 +1104,7 @@ abstract class ExecutionHandler {
 class SyntaxValidator     extends ExecutionHandler { ... }  // Quick reject malformed code
 class SecurityValidator   extends ExecutionHandler { ... }  // Block dangerous imports/syscalls
 class CompilationHandler  extends ExecutionHandler { ... }  // Compile if needed → CE on fail
-class ExecutionHandler_   extends ExecutionHandler { ... }  // Run each test case in Docker
+class ExecutionHandler_   extends ExecutionHandler { ... }  // Run each test case via ProcessBuilder
 class VerdictHandler      extends ExecutionHandler { ... }  // Compute final verdict
 
 // ── Pipeline Context (data passed through chain)
@@ -1056,7 +1115,7 @@ class PipelineContext {
     List<TestCaseDto> testCases;
     int               timeLimitMs;
     int               memoryLimitMB;
-    String            workDir;           // temp Docker volume mount
+    String            workDir;           // temp directory for compilation/execution
     CompilationResult compilationResult;
     List<TestResult>  testResults;       // per-test results
     Verdict           finalVerdict;
@@ -1086,18 +1145,39 @@ interface SubmissionService {
 @Service @Transactional
 class SubmissionServiceImpl implements SubmissionService {
     // On submit:
-    //   1. Validate language, code not empty
-    //   2. Rate-limit check (Redis): max 5 submissions / 5 min per user/problem
-    //   3. Call ContestService (Eureka) → validate ACTIVE contest + participant
-    //   4. Call ContestService (Eureka) → fetch hidden test cases for problemId
-    //   5. Create Submission { verdict: PENDING } in execution_db
-    //   6. Return HTTP 202 { submissionId }
-    //   7. Publish SubmissionMessage to RabbitMQ → submission.queue
+    //   1. Parse and validate language, code not empty
+    //   2. Rate-limit check (Redis with DB fallback): max 10 submissions / 10 min per user
+    //   3. Call ContestService (via OpenFeign) → validate ACTIVE contest
+    //   4. Call ContestService (via OpenFeign) → validate participant
+    //   5. Call ContestService (via OpenFeign) → fetch problem (apply language time/memory multipliers)
+    //   6. Call ContestService (via OpenFeign) → fetch hidden test cases
+    //   7. Create Submission { verdict: PENDING } in execution_db
+    //   8. Return HTTP 202 { submissionId }
+    //   9. Publish SubmissionMessage to RabbitMQ → submission.queue
 
-    private final SubmissionRepository repo;
-    private final RabbitTemplate        rabbitTemplate;
-    private final RedisTemplate<String,String> redis;
-    private final RestTemplate          restTemplate;  // Eureka-resolved
+    private final SubmissionRepository       repo;
+    private final RabbitTemplate             rabbitTemplate;
+    private final StringRedisTemplate        redis;
+    private final ContestServiceClient       contestClient;  // OpenFeign
+    private final ExecutionProperties        executionProps;
+}
+
+// ── OpenFeign Client (inter-service communication)
+@FeignClient(name = "CONTEST-SERVICE")
+interface ContestServiceClient {
+    @GetMapping("/contest/v1/contests/{id}")
+    ApiResponse<ContestResponse> getContest(@PathVariable UUID id);
+
+    @GetMapping("/contest/v1/contests/{contestId}/participants/{userId}")
+    ApiResponse<Boolean> checkParticipant(@PathVariable UUID contestId, @PathVariable UUID userId);
+
+    @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}")
+    ApiResponse<ProblemResponse> getProblem(@PathVariable UUID contestId, @PathVariable UUID problemId);
+
+    @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}/testcases")
+    ApiResponse<List<TestCaseResponse>> getTestCases(@PathVariable UUID contestId,
+                                                     @PathVariable UUID problemId,
+                                                     @RequestParam String type);
 }
 
 // ── RabbitMQ Message
@@ -1110,8 +1190,9 @@ record SubmissionMessage(
     int               memoryLimitMB,
     UUID              userId,
     UUID              contestId,
-    UUID              problemId
-) {}
+    UUID              problemId,
+    int               points        // from Problem entity, used for Kafka score
+) implements Serializable {}
 
 // ── Execution Worker (RabbitMQ Consumer)
 @Service
@@ -1136,7 +1217,7 @@ class StaleSubmissionSweeper {
     @Scheduled(fixedRate = 60_000)  // every 60 seconds
     void markStaleSubmissions() {
         // Find submissions with verdict=PENDING and submittedAt < now - 5 minutes
-        // Update verdict to FAILED, errorMessage = "Execution timed out"
+        // Update verdict to RE (Runtime Error), errorMessage = "Execution timed out"
     }
 }
 
@@ -1468,20 +1549,23 @@ Client    API Gateway    Auth Service    Google/GitHub    auth_db
 ### 3.4 Code Submission & Execution
 
 ```
-Client    API GW    Exec Svc     Contest Svc     RabbitMQ    Exec Worker    Kafka    Contest Svc (LB)
+Client    API GW    Exec Svc     Contest Svc(Feign)  RabbitMQ    Exec Worker    Kafka    Contest Svc (LB)
   │          │          │              │              │             │           │           │
   │─POST /exec/v1/submissions──►│     │              │             │           │           │
   │          │─JWT validate     │     │              │             │           │           │
   │          │─add X-User-* hdrs│     │              │             │           │           │
   │          │─────────────────►│     │              │             │           │           │
-  │          │          │─rate limit (Redis: 5/5min)  │             │           │           │
-  │          │          │─GET /contest/v1/contests/{id}/status     │           │           │
+  │          │          │─rate limit (Redis: 10/10min, DB fallback) │           │           │
+  │          │          │─[Feign] GET /contests/{id}               │           │           │
   │          │          │──────────────────────────►│              │           │           │
   │          │          │◄──────────── { status: ACTIVE }          │           │           │
-  │          │          │─GET /contest/v1/contests/{id}/participants/{userId}   │           │
+  │          │          │─[Feign] GET /contests/{id}/participants/{userId}      │           │
   │          │          │──────────────────────────►│              │           │           │
   │          │          │◄──────────── { registered: true }        │           │           │
-  │          │          │─GET /contest/v1/contests/{id}/problems/{pId}/testcases│           │
+  │          │          │─[Feign] GET /contests/{id}/problems/{pId}│           │           │
+  │          │          │──────────────────────────►│              │           │           │
+  │          │          │◄──────────── { problem + apply lang multipliers }    │           │
+  │          │          │─[Feign] GET /problems/{pId}/testcases?type=HIDDEN    │           │
   │          │          │──────────────────────────►│              │           │           │
   │          │          │◄──────────── [testCases (HIDDEN)]        │           │           │
   │          │          │─INSERT submission {verdict:PENDING}       │           │           │
@@ -1489,17 +1573,18 @@ Client    API GW    Exec Svc     Contest Svc     RabbitMQ    Exec Worker    Kafk
   │◄──────── 202 { submissionId }                   │              │           │           │
   │          │          │                            │              │           │           │
   │          │          │                     [Async — worker picks up message] │           │
-  │          │          │                            │             ├─SyntaxValidator        │
-  │          │          │                            │             ├─SecurityValidator       │
-  │          │          │                            │             ├─CompilationHandler      │
-  │          │          │                            │             │  (Docker: compile)      │
-  │          │          │                            │             ├─ExecutionHandler        │
-  │          │          │                            │             │  (Docker: run tests)    │
-  │          │          │                            │             ├─VerdictHandler          │
+  │          │          │                            │             ├─SyntaxValidatorStep    │
+  │          │          │                            │             ├─SecurityValidatorStep   │
+  │          │          │                            │             ├─CompilationStep         │
+  │          │          │                            │             │  (ProcessBuilder: compile)│
+  │          │          │                            │             ├─TestCaseExecutionStep   │
+  │          │          │                            │             │  (ProcessBuilder: run)   │
+  │          │          │                            │             ├─VerdictStep             │
   │          │          │                            │             │─UPDATE submission {verdict, time, mem}
   │          │          │                            │             │─publish SubmissionCompleted──►│
   │          │          │                            │             │           │─leaderboard-group─►│
-  │          │          │                            │             │           │           │  │─update rank
+  │          │          │                            │             │           │           │  │─Redis ZINCRBY
+  │          │          │                            │             │           │           │  │─WebSocket push
   │          │          │                            │             │           │─analytics-group────►│
   │          │          │                            │             │           │           │       │─update stats
   │          │          │                            │             │           │           │       │
@@ -2352,14 +2437,14 @@ class CompilationStep extends ExecutionStep {
     }
 }
 
-// Step 4: Execution against all test cases in Docker sandbox
+// Step 4: Execution against all test cases via ProcessBuilder
 @Component
 class TestCaseExecutionStep extends ExecutionStep {
     protected PipelineContext handle(PipelineContext ctx) {
         LanguageExecutor ex = factory.getExecutor(ctx.getLanguage());
         for (TestCaseDto tc : ctx.getTestCases()) {
             ExecutionResult er = ex.execute(ctx.getWorkDir(), tc.getInput(),
-                                            tc.getTimeLimitMs(), tc.getMemoryLimitMB());
+                                            ctx.getTimeLimitMs(), ctx.getMemoryLimitMB());
             ctx.addTestResult(tc.getId(), er);
         }
         return ctx;
@@ -2437,56 +2522,85 @@ class AnalyticsKafkaConsumer {
 
 ---
 
-### 5.4 Cache-Aside — Redis Leaderboard
+### 5.4 Redis Sorted Sets — Real-Time Leaderboard
 
-**Problem:** Leaderboard reads are extremely frequent during active contests. Every AC submission invalidates the cache.
+**Problem:** Leaderboard reads are extremely frequent during active contests. Rankings must update in real-time on each AC submission and push changes to connected clients.
+
+**Pattern:** Redis sorted sets for fast ranking, Redis sets for deduplication, WebSocket for live broadcast, PostgreSQL as source of truth.
 
 ```java
 @Service
 class LeaderboardServiceImpl implements LeaderboardService {
 
-    private static final String CACHE_KEY = "leaderboard:contest:%s:page:%d";
-    private static final long   TTL_SECONDS = 30;
+    private final RedisTemplate<String, String> redisTemplate;
+    private final SimpMessagingTemplate         messagingTemplate;  // WebSocket
+    private final LeaderboardRepository         leaderboardRepo;
 
-    @Transactional(readOnly = true)
+    // Read: Redis first, DB fallback
     public Page<LeaderboardResponse> getContestLeaderboard(UUID contestId, Pageable pageable) {
-        String cacheKey = String.format(CACHE_KEY, contestId, pageable.getPageNumber());
+        String leaderboardKey = "leaderboard:" + contestId;
 
-        // 1. Check Redis
-        String cached = redis.opsForValue().get(cacheKey);
-        if (cached != null) {
-            return objectMapper.readValue(cached, new TypeReference<>() {});
+        // 1. Try Redis sorted set
+        Set<ZSetOperations.TypedTuple<String>> entries =
+            redisTemplate.opsForZSet().reverseRangeWithScores(leaderboardKey, 0, -1);
+
+        if (entries != null && !entries.isEmpty()) {
+            // Build response from Redis sorted set entries
+            return buildFromRedis(entries, pageable);
         }
 
-        // 2. Cache miss — query DB
+        // 2. Fallback to DB
         Page<Leaderboard> rows = leaderboardRepo.findByContestIdOrderByRankAsc(contestId, pageable);
-        Page<LeaderboardResponse> result = rows.map(mapper::toResponse);
-
-        // 3. Store in Redis with TTL
-        redis.opsForValue().set(cacheKey, objectMapper.writeValueAsString(result),
-                                Duration.ofSeconds(TTL_SECONDS));
-        return result;
+        return rows.map(mapper::toResponse);
     }
 
-    // Called by Kafka consumer after each AC submission
-    public void invalidateLeaderboardCache(UUID contestId) {
-        Set<String> keys = redis.keys("leaderboard:contest:" + contestId + ":page:*");
-        if (keys != null && !keys.isEmpty()) redis.delete(keys);
+    // Write: called by LeaderboardKafkaConsumer on AC submission
+    public void updateOnSubmission(SubmissionCompletedEvent event) {
+        String solvedKey = "leaderboard:" + event.getContestId() + ":solved:" + event.getUserId();
+
+        // 1. Deduplication — check if already solved this problem
+        if (redisTemplate.opsForSet().isMember(solvedKey, event.getProblemId().toString())) {
+            return;  // already counted
+        }
+
+        // 2. Mark as solved in Redis set
+        redisTemplate.opsForSet().add(solvedKey, event.getProblemId().toString());
+
+        // 3. Update score in Redis sorted set
+        String leaderboardKey = "leaderboard:" + event.getContestId();
+        redisTemplate.opsForZSet().incrementScore(leaderboardKey,
+            event.getUserId().toString(), event.getScore());
+
+        // 4. Update PostgreSQL (source of truth)
+        Leaderboard entry = findOrCreateEntry(event);
+        entry.setScore(entry.getScore() + event.getScore());
+        entry.setProblemsSolved(entry.getProblemsSolved() + 1);
+        entry.addSolvedProblem(event.getProblemId());
+        leaderboardRepo.save(entry);
+
+        // 5. Recalculate ranks
+        recalculateRanks(event.getContestId());
+
+        // 6. Broadcast via WebSocket
+        messagingTemplate.convertAndSend(
+            "/topic/leaderboard/" + event.getContestId(),
+            getContestLeaderboard(event.getContestId(), PageRequest.of(0, 50)));
     }
 }
 ```
 
-**Cache Key Registry:**
+**Cache & Redis Key Registry:**
 
-| Key Pattern | TTL | Invalidated By |
-|---|---|---|
-| `leaderboard:contest:{id}:page:{n}` | 30 sec | New AC submission |
-| `leaderboard:global:page:{n}` | 5 min | Contest completion |
-| `contest:{id}:status` | 10 sec | Status transition |
-| `problem:{id}` | 10 min | Problem update |
-| `ratelimit:sub:{userId}:{problemId}` | 5 min | Auto-expire |
-| `jwt:blacklist:{token}` | Remaining JWT TTL | Logout |
-| `user:dashboard:{userId}` | 2 min | New verdict |
+| Key Pattern | Type | TTL | Updated By |
+|---|---|---|---|
+| `leaderboard:{contestId}` | Sorted Set | Persistent during contest | ZINCRBY on AC |
+| `leaderboard:{contestId}:solved:{userId}` | Set | Persistent during contest | SADD on new AC solve |
+| `leaderboard:global:page:{n}` | String (cache) | 5 min | Contest completion |
+| `contest:{id}` | String (cache) | 10 sec | Schedule/cancel/activate/complete |
+| `problem:{id}` | String (cache) | 10 min | Problem update/publish/delete |
+| `ratelimit:submission:{userId}` | String (counter) | 10 min | Auto-expire |
+| `jwt:blacklist:{token}` | String | Remaining JWT TTL | Logout |
+| `user:dashboard:{userId}` | String (cache) | 2 min | New verdict |
 
 ---
 
@@ -2684,5 +2798,5 @@ class ContestMapper {
 
 ---
 
-*Document Version: 1.0 | CodeForge Platform*
+*Document Version: 1.3 | CodeForge Platform*
 *Next: Implementation — Sprint 1 (Auth Service + API Gateway + Eureka)*
