@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -25,7 +26,10 @@ import java.nio.charset.StandardCharsets;
 @Slf4j
 public class JwtValidationFilter implements GlobalFilter, Ordered {
 
+    private static final String BLACKLIST_PREFIX = "jwt:blacklist:";
+
     private final JwtProperties jwtProperties;
+    private final ReactiveStringRedisTemplate redisTemplate;
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
     @Override
@@ -48,13 +52,22 @@ public class JwtValidationFilter implements GlobalFilter, Ordered {
         try {
             Claims claims = validateToken(token);
 
-            ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
-                    .header("X-User-Id", claims.getSubject())
-                    .header("X-User-Email", claims.get("email", String.class))
-                    .header("X-User-Role", claims.get("role", String.class))
-                    .build();
+            return redisTemplate.hasKey(BLACKLIST_PREFIX + token)
+                    .flatMap(blacklisted -> {
+                        if (Boolean.TRUE.equals(blacklisted)) {
+                            log.warn("Blacklisted token used by user {}", claims.getSubject());
+                            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+                            return exchange.getResponse().setComplete();
+                        }
 
-            return chain.filter(exchange.mutate().request(mutatedRequest).build());
+                        ServerHttpRequest mutatedRequest = exchange.getRequest().mutate()
+                                .header("X-User-Id", claims.getSubject())
+                                .header("X-User-Email", claims.get("email", String.class))
+                                .header("X-User-Role", claims.get("role", String.class))
+                                .build();
+
+                        return chain.filter(exchange.mutate().request(mutatedRequest).build());
+                    });
 
         } catch (Exception ex) {
             log.warn("JWT validation failed: {}", ex.getMessage());

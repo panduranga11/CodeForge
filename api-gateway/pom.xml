@@ -63,6 +63,12 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- Redis (reactive — for JWT blacklist check) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+		</dependency>
+
 		<!-- Lombok -->
 		<dependency>
 			<groupId>org.projectlombok</groupId>
