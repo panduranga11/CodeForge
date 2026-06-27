@@ -1,6 +1,6 @@
 package com.codeforge.contest.problem.dto;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,5 +22,5 @@ public record ProblemResponse(
         int sequenceNo,
         String status,
         List<TestCaseResponse> sampleTestCases,
-        LocalDateTime createdAt
+        Instant createdAt
 ) {}

@@ -1,6 +1,6 @@
 package com.codeforge.contest.leaderboard.dto;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 public record LeaderboardResponse(
@@ -9,5 +9,5 @@ public record LeaderboardResponse(
         int score,
         int penaltyTime,
         int problemsSolved,
-        LocalDateTime lastAcTime
+        Instant lastAcTime
 ) {}

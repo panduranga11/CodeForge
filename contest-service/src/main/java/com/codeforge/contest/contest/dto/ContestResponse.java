@@ -1,14 +1,14 @@
 package com.codeforge.contest.contest.dto;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.UUID;
 
 public record ContestResponse(
         UUID id,
         String title,
         String description,
-        LocalDateTime startTime,
-        LocalDateTime endTime,
+        Instant startTime,
+        Instant endTime,
         String status,
         String visibility,
         String regType,
@@ -19,5 +19,5 @@ public record ContestResponse(
         UUID hostId,
         long participantCount,
         long problemCount,
-        LocalDateTime createdAt
+        Instant createdAt
 ) {}

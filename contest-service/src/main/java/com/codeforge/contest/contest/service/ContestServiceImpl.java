@@ -15,7 +15,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
-import java.time.LocalDateTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 
 @Service
@@ -191,11 +192,11 @@ public class ContestServiceImpl implements ContestService {
         }
     }
 
-    private void validateContestTimes(LocalDateTime startTime, LocalDateTime endTime) {
-        if (startTime.isBefore(LocalDateTime.now().plusMinutes(10))) {
+    private void validateContestTimes(Instant startTime, Instant endTime) {
+        if (startTime.isBefore(Instant.now().plus(Duration.ofMinutes(10)))) {
             throw new InvalidContestStateException("Start time must be at least 10 minutes in the future");
         }
-        if (endTime.isBefore(startTime.plusMinutes(15))) {
+        if (endTime.isBefore(startTime.plus(Duration.ofMinutes(15)))) {
             throw new InvalidContestStateException("Contest duration must be at least 15 minutes");
         }
     }

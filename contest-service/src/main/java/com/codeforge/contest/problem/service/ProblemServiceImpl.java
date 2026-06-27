@@ -14,7 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -142,7 +142,7 @@ public class ProblemServiceImpl implements ProblemService {
     public void delete(UUID contestId, UUID problemId, UUID userId) {
         findContestAndVerifyHost(contestId, userId);
         Problem problem = findProblemInContest(contestId, problemId);
-        problem.setDeletedAt(LocalDateTime.now());
+        problem.setDeletedAt(Instant.now());
         problemRepository.save(problem);
         log.info("Problem soft-deleted id={} in contest={}", problemId, contestId);
     }
