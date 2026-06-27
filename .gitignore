@@ -34,3 +34,4 @@ node_modules/
 
 # Agent config
 .agents/
+.claude/
