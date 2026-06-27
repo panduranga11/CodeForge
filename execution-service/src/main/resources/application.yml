@@ -74,6 +74,12 @@ app:
       JAVASCRIPT:
         time-multiplier: 2.5             # Node.js gets 2.5x base time
         memory-multiplier: 2.0
+    docker:
+      images:
+        java: codeforge/java-runner
+        python: codeforge/python-runner
+        cpp: codeforge/cpp-runner
+        javascript: codeforge/js-runner
 
 logging:
   level:
