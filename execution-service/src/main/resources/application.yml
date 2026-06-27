@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: execution-service
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/execution_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
+
+  # RabbitMQ
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        retry:
+          enabled: true
+          initial-interval: 1000
+          max-attempts: 3
+          multiplier: 2.0
+        default-requeue-rejected: false
+
+  # Redis
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  # Kafka
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+server:
+  port: ${SERVER_PORT:8083}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+    register-with-eureka: true
+    fetch-registry: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.uuid}
+
+# Execution Engine Config (LeetCode/Codeforces style)
+app:
+  execution:
+    compilation-timeout-seconds: 30
+    max-source-code-bytes: 65536          # 64KB (Codeforces: 64KB)
+    rate-limit: 10                         # max submissions per window (LeetCode ~10)
+    rate-limit-window-minutes: 10
+    languages:
+      JAVA:
+        time-multiplier: 2.0              # Java gets 2x base time (Codeforces standard)
+        memory-multiplier: 2.0            # Java gets 2x base memory
+      PYTHON:
+        time-multiplier: 3.0              # Python gets 3x base time
+        memory-multiplier: 2.0
+      CPP:
+        time-multiplier: 1.0              # C++ is the baseline
+        memory-multiplier: 1.0
+      JAVASCRIPT:
+        time-multiplier: 2.5             # Node.js gets 2.5x base time
+        memory-multiplier: 2.0
+
+logging:
+  level:
+    com.codeforge.execution: DEBUG
+    org.hibernate.SQL: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
