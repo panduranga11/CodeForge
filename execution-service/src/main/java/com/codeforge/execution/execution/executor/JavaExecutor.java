@@ -1,17 +1,23 @@
 package com.codeforge.execution.execution.executor;
 
 import com.codeforge.execution.submission.entity.Language;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.TimeUnit;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class JavaExecutor implements LanguageExecutor {
+
+    private final DockerSandbox dockerSandbox;
+
+    @Value("${app.execution.docker.images.java:codeforge/java-runner}")
+    private String dockerImage;
 
     @Override
     public Language getLanguage() {
@@ -24,23 +30,7 @@ public class JavaExecutor implements LanguageExecutor {
             Path sourceFile = Path.of(workDir, "Main.java");
             Files.writeString(sourceFile, sourceCode);
 
-            ProcessBuilder pb = new ProcessBuilder("javac", "Main.java")
-                    .directory(new File(workDir))
-                    .redirectErrorStream(true);
-            Process process = pb.start();
-            String output = readStream(process.getInputStream());
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
-
-            if (!finished) {
-                process.destroyForcibly();
-                return CompilationResult.failed("Compilation timed out");
-            }
-
-            if (process.exitValue() != 0) {
-                return CompilationResult.failed(output);
-            }
-
-            return CompilationResult.ok();
+            return dockerSandbox.compile(dockerImage, "javac Main.java", workDir, 30);
         } catch (Exception e) {
             log.error("Java compilation error: {}", e.getMessage());
             return CompilationResult.failed(e.getMessage());
@@ -49,49 +39,7 @@ public class JavaExecutor implements LanguageExecutor {
 
     @Override
     public ExecutionResult execute(String workDir, String input, int timeLimitMs, int memoryLimitMB) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    "java", "-Xmx" + memoryLimitMB + "m", "Main")
-                    .directory(new File(workDir))
-                    .redirectErrorStream(false);
-            Process process = pb.start();
-
-            try (OutputStream os = process.getOutputStream()) {
-                os.write(input.getBytes());
-                os.flush();
-            }
-
-            long startTime = System.currentTimeMillis();
-            boolean finished = process.waitFor(timeLimitMs, TimeUnit.MILLISECONDS);
-            int elapsed = (int) (System.currentTimeMillis() - startTime);
-
-            if (!finished) {
-                process.destroyForcibly();
-                return ExecutionResult.tle(elapsed, 0);
-            }
-
-            String stdout = readStream(process.getInputStream());
-            String stderr = readStream(process.getErrorStream());
-
-            if (process.exitValue() != 0) {
-                return ExecutionResult.runtimeError(stderr, elapsed, 0);
-            }
-
-            return ExecutionResult.success(stdout.trim(), elapsed, 0);
-        } catch (Exception e) {
-            log.error("Java execution error: {}", e.getMessage());
-            return ExecutionResult.runtimeError(e.getMessage(), 0, 0);
-        }
-    }
-
-    private String readStream(InputStream stream) throws IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append("\n");
-            }
-            return sb.toString();
-        }
+        String command = "java -Xmx" + memoryLimitMB + "m Main";
+        return dockerSandbox.execute(dockerImage, command, workDir, input, timeLimitMs, memoryLimitMB);
     }
 }
