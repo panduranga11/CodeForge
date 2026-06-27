@@ -1,9 +1,9 @@
 # High Level Design (HLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.7
+**Version:** 1.6
 **Status:** Draft
-**Date:** 2026-06-27
+**Date:** 2026-06-25
 **Changes:**
 - v1.1: Added self-service "Host a Contest" flow with invite link/code system
 - v1.2: Added OAuth2 authentication (Google, GitHub)
@@ -11,7 +11,6 @@
 - v1.4: Added Eureka Service Discovery, RabbitMQ execution queue, Kafka event streaming
 - v1.5: Removed Organisation concept; aligned all flows, DB sections, and deployment config with current 4-service architecture
 - v1.6: Scoped problems to contests — problems table gains `contest_id` FK, `points`, `sequence_no`; removed `visibility` and the `contest_problems` junction table; nested problem routes under `/contest/v1/contests/{contestId}/problems`; updated public routes, data flows, and internal service-to-service test-case fetch path
-- v1.7: All Contest Service timestamps changed from `LocalDateTime` to `Instant` (UTC); implemented `ContestLifecycleScheduler` (30s polling, auto-transitions SCHEDULED→ACTIVE→COMPLETED); added `@EnableScheduling`; enhanced `GlobalExceptionHandler` with handlers for `IllegalArgumentException`, `DataIntegrityViolationException`, `HttpMessageNotReadableException`
 
 ---
 
@@ -278,7 +277,7 @@ Auth Service
 **Responsibility:** Problems, Contests, Participants, Leaderboard, Analytics
 
 ```
-Contest Service  (@EnableScheduling)
+Contest Service
 ├── problem/
 │   ├── ProblemController    → /contest/v1/contests/{contestId}/problems
 │   ├── ProblemService
@@ -288,27 +287,14 @@ Contest Service  (@EnableScheduling)
 │   ├── ContestController    → /contest/v1/contests
 │   ├── ContestService
 │   ├── ContestRepository
-│   ├── ParticipantRepository
-│   └── scheduler/
-│       └── ContestLifecycleScheduler → @Scheduled(fixedRate=30s)
+│   └── ParticipantRepository
 ├── leaderboard/
 │   ├── LeaderboardController → /contest/v1/leaderboard
 │   ├── LeaderboardService
 │   └── LeaderboardRepository
-├── analytics/
-│   ├── AnalyticsController  → /contest/v1/analytics
-│   └── AnalyticsService
-└── shared/
-    ├── config/
-    │   └── JpaAuditingConfig    → Enables @CreatedDate, @LastModifiedDate auditing
-    ├── exception/
-    │   ├── GlobalExceptionHandler → AppException, validation, illegal arg, data integrity, unreadable body
-    │   ├── AppException, ContestNotFoundException, ProblemNotFoundException
-    │   ├── InvalidContestStateException, DuplicateProblemTitleException
-    │   ├── AlreadyRegisteredException, ContestFullException
-    │   ├── InvalidInviteCodeException, UnauthorizedAccessException
-    └── response/
-        └── ApiResponse          → Standard wrapper (timestamp is Instant/UTC)
+└── analytics/
+    ├── AnalyticsController  → /contest/v1/analytics
+    └── AnalyticsService
 ```
 
 > **Design Decision:** Problems are scoped to contests — there is no standalone problem library. A host creates problems within their contest. Problems are only visible to registered participants during an ACTIVE contest.
@@ -689,30 +675,27 @@ API Gateway → AI Service
 Organizer creates Contest (DRAFT)
   │
   ├── Adds Problems to Contest
-  ├── Sets Start Time & End Time (Instant/UTC)
+  ├── Sets Start Time & End Time
   │
   ▼
 Organizer schedules Contest (DRAFT → SCHEDULED)
   │
-  └── ContestLifecycleScheduler polls every 30 seconds
+  ├── System schedules ActivationJob at startTime
+  └── System schedules CompletionJob at endTime
 
-  [ContestLifecycleScheduler — @Scheduled(fixedRate = 30000)]
-  │
-  ├── Checks: status=SCHEDULED AND startTime <= Instant.now()
-  │     └── Transitions to ACTIVE, logs activation
-  │
-  ├── Checks: status=ACTIVE AND endTime <= Instant.now()
-  │     └── Transitions to COMPLETED, logs completion
-  │
-  [During ACTIVE]
+  [At startTime]
+  ActivationJob fires → Contest status: SCHEDULED → ACTIVE
+  ├── Problems unlocked for participants
+  └── Submissions accepted
+
+  [During Contest]
   Students submit code → Execution → Leaderboard updates
 
-  [On COMPLETED]
-  ├── Submissions LOCKED (application-level check)
+  [At endTime]
+  CompletionJob fires → Contest status: ACTIVE → COMPLETED
+  ├── Submissions LOCKED
   └── Final leaderboard generated & frozen
 ```
-
-> **Implementation Note:** The lifecycle scheduler uses a single `@Scheduled` method with a 30-second fixed rate. It queries `ContestRepository.findByStatusAndStartTimeBefore()` and `findByStatusAndEndTimeBefore()` to find contests due for transition. All timestamps use `Instant` (UTC) to avoid timezone ambiguity.
 
 ---
 
@@ -888,7 +871,6 @@ Participant sees contest lobby / countdown timer
 ### 7.2 Contest Database (`contest_db`)
 
 > **Owned by:** Contest Service (Port 8082)
-> **Timestamp convention:** All timestamps in contest_db use `Instant` (UTC) — stored as `TIMESTAMP WITH TIME ZONE` in PostgreSQL. No `LocalDateTime` is used.
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -912,9 +894,9 @@ Participant sees contest lobby / countdown timer
 │ sequence_no   │ INTEGER (display order in contest)    │
 │ status        │ ENUM(DRAFT, PUBLISHED)                │
 │ created_by    │ UUID (user_id from auth_db, no FK)    │
-│ created_at    │ TIMESTAMP WITH TIME ZONE (Instant)    │
-│ updated_at    │ TIMESTAMP WITH TIME ZONE (Instant)    │
-│ deleted_at    │ TIMESTAMP WITH TIME ZONE (soft delete)│
+│ created_at    │ TIMESTAMP                             │
+│ updated_at    │ TIMESTAMP                             │
+│ deleted_at    │ TIMESTAMP (soft delete)               │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
@@ -926,7 +908,7 @@ Participant sees contest lobby / countdown timer
 │ expected_output│ TEXT                                 │
 │ type          │ ENUM(SAMPLE, HIDDEN)                  │
 │ score_weight  │ INTEGER DEFAULT 1                     │
-│ created_at    │ TIMESTAMP WITH TIME ZONE (Instant)    │
+│ created_at    │ TIMESTAMP                             │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
@@ -935,8 +917,8 @@ Participant sees contest lobby / countdown timer
 │ id            │ UUID (PK)                             │
 │ title         │ VARCHAR(200)                          │
 │ description   │ TEXT                                  │
-│ start_time    │ TIMESTAMP WITH TIME ZONE (Instant)    │
-│ end_time      │ TIMESTAMP WITH TIME ZONE (Instant)    │
+│ start_time    │ TIMESTAMP                             │
+│ end_time      │ TIMESTAMP                             │
 │ status        │ ENUM(DRAFT, SCHEDULED, ACTIVE,        │
 │               │      COMPLETED, CANCELLED)            │
 │ visibility    │ ENUM(PUBLIC, PRIVATE)                 │
@@ -944,12 +926,11 @@ Participant sees contest lobby / countdown timer
 │ scoring_mode  │ ENUM(POINTS, PENALTY_TIME, PERCENTAGE)│
 │ max_participants│ INTEGER NULL                        │
 │ invite_code   │ VARCHAR(8) UNIQUE                     │
-│ invite_link   │ VARCHAR(500)                          │
+│ invite_link   │ VARCHAR(255)                          │
 │ host_id       │ UUID (user_id from auth_db, no FK)    │
 │ created_by    │ UUID (user_id from auth_db, no FK)    │
-│ created_at    │ TIMESTAMP WITH TIME ZONE (Instant)    │
-│ updated_at    │ TIMESTAMP WITH TIME ZONE (Instant)    │
-│ deleted_at    │ TIMESTAMP WITH TIME ZONE (soft delete)│
+│ created_at    │ TIMESTAMP                             │
+│ updated_at    │ TIMESTAMP                             │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
@@ -958,7 +939,7 @@ Participant sees contest lobby / countdown timer
 │ id            │ UUID (PK)                             │
 │ contest_id    │ UUID FK → contests                    │
 │ user_id       │ UUID (user_id from auth_db, no FK)    │
-│ registered_at │ TIMESTAMP WITH TIME ZONE (Instant)    │
+│ registered_at │ TIMESTAMP                             │
 │               │ UNIQUE(contest_id, user_id)           │
 └──────────────────────────────────────────────────────┘
 
@@ -972,8 +953,8 @@ Participant sees contest lobby / countdown timer
 │ score         │ INTEGER                               │
 │ penalty_time  │ INTEGER (minutes)                     │
 │ problems_solved│ INTEGER                              │
-│ last_ac_time  │ TIMESTAMP WITH TIME ZONE (Instant)    │
-│ updated_at    │ TIMESTAMP WITH TIME ZONE (Instant)    │
+│ last_ac_time  │ TIMESTAMP                             │
+│ updated_at    │ TIMESTAMP                             │
 │               │ UNIQUE(contest_id, user_id)           │
 └──────────────────────────────────────────────────────┘
 ```
@@ -1126,20 +1107,16 @@ Contest Service                        Contest Service
 ### 9.4 Event Flow: Contest Lifecycle
 
 ```
-ContestLifecycleScheduler — @Scheduled(fixedRate = 30000)
+Contest Service (Scheduler Job)
     │
-    │─ findByStatusAndStartTimeBefore(SCHEDULED, Instant.now())
-    ├── [For each due contest] → Status: SCHEDULED → ACTIVE
-    │       └── (Future: Publish to Kafka: "contest.events" { type: ACTIVATED, contestId })
+    ├── [At startTime] → Status: SCHEDULED → ACTIVE
+    │       └── Publish to Kafka: "contest.events" { type: ACTIVATED, contestId }
     │
-    │─ findByStatusAndEndTimeBefore(ACTIVE, Instant.now())
-    └── [For each expired contest] → Status: ACTIVE → COMPLETED
-            ├── Lock submissions (application-level check)
+    └── [At endTime]  → Status: ACTIVE → COMPLETED
+            ├── Lock submissions
             ├── Freeze leaderboard
-            └── (Future: Publish to Kafka: "contest.events" { type: COMPLETED, contestId })
+            └── Publish to Kafka: "contest.events" { type: COMPLETED, contestId }
 ```
-
-> **Current State:** The scheduler transitions contest status and logs the event. Kafka publishing for contest lifecycle events is planned for when the Execution Service is integrated.
 
 ---
 
@@ -1557,5 +1534,5 @@ Future v2.0 — Execution scales to Kubernetes:
 
 ---
 
-*Document Version: 1.7 | CodeForge Platform*
+*Document Version: 1.5 | CodeForge Platform*
 *Next: Low Level Design (LLD) — Class Diagrams & Sequence Diagrams*
