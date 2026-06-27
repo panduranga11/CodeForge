@@ -19,5 +19,7 @@ public interface ProblemService {
 
     ProblemResponse publish(UUID contestId, UUID problemId, UUID userId);
 
+    List<TestCaseResponse> getTestCases(UUID contestId, UUID problemId, String type);
+
     void delete(UUID contestId, UUID problemId, UUID userId);
 }

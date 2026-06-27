@@ -7,7 +7,11 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Arrays;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Entity
 @Table(name = "leaderboard",
@@ -46,6 +50,9 @@ public class Leaderboard {
     @Column(name = "last_ac_time")
     private LocalDateTime lastAcTime;
 
+    @Column(name = "solved_problem_ids", length = 2000)
+    private String solvedProblemIds;
+
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
@@ -53,5 +60,18 @@ public class Leaderboard {
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
+    }
+
+    public boolean hasAlreadySolved(UUID problemId) {
+        if (solvedProblemIds == null || solvedProblemIds.isBlank()) return false;
+        return solvedProblemIds.contains(problemId.toString());
+    }
+
+    public void addSolvedProblem(UUID problemId) {
+        if (solvedProblemIds == null || solvedProblemIds.isBlank()) {
+            solvedProblemIds = problemId.toString();
+        } else {
+            solvedProblemIds = solvedProblemIds + "," + problemId.toString();
+        }
     }
 }

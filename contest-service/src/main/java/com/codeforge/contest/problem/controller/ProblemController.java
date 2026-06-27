@@ -73,6 +73,15 @@ public class ProblemController {
         return ResponseEntity.ok(ApiResponse.success("Problem published", response));
     }
 
+    @GetMapping("/{problemId}/testcases")
+    public ResponseEntity<ApiResponse<List<TestCaseResponse>>> getTestCases(
+            @PathVariable UUID contestId,
+            @PathVariable UUID problemId,
+            @RequestParam(required = false) String type) {
+        List<TestCaseResponse> response = problemService.getTestCases(contestId, problemId, type);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
     @DeleteMapping("/{problemId}")
     public ResponseEntity<ApiResponse<Void>> delete(
             @PathVariable UUID contestId,

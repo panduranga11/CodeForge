@@ -100,4 +100,16 @@ public class ContestController {
         JoinContestResponse response = contestService.join(request, userId);
         return ResponseEntity.ok(ApiResponse.success("Joined contest", response));
     }
+
+    @GetMapping("/{id}/participants/{userId}")
+    public ResponseEntity<ApiResponse<Boolean>> checkParticipant(
+            @PathVariable UUID id,
+            @PathVariable UUID userId) {
+        boolean exists = contestService.isParticipant(id, userId);
+        if (!exists) {
+            return ResponseEntity.status(404)
+                    .body(ApiResponse.error("Not a participant", "NOT_A_PARTICIPANT"));
+        }
+        return ResponseEntity.ok(ApiResponse.success(true));
+    }
 }

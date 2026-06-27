@@ -6,6 +6,7 @@ import com.codeforge.contest.contest.repository.ContestParticipantRepository;
 import com.codeforge.contest.contest.repository.ContestRepository;
 import com.codeforge.contest.problem.entity.ProblemStatus;
 import com.codeforge.contest.problem.repository.ProblemRepository;
+import com.codeforge.contest.shared.config.CacheService;
 import com.codeforge.contest.shared.exception.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -28,9 +31,13 @@ public class ContestServiceImpl implements ContestService {
     private static final int INVITE_CODE_LENGTH = 8;
     private static final String INVITE_LINK_BASE = "https://codeforge.io/join/";
 
+    private static final String CONTEST_CACHE_KEY = "contest:%s";
+    private static final Duration CONTEST_CACHE_TTL = Duration.ofSeconds(10);
+
     private final ContestRepository contestRepository;
     private final ContestParticipantRepository participantRepository;
     private final ProblemRepository problemRepository;
+    private final CacheService cacheService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Override
@@ -54,14 +61,26 @@ public class ContestServiceImpl implements ContestService {
 
         contest = contestRepository.save(contest);
         log.info("Contest created id={} by host={}", contest.getId(), hostId);
-        return toResponse(contest);
+
+        ContestResponse response = toResponse(contest);
+        cacheContest(contest.getId(), response);
+        return response;
     }
 
     @Override
     @Transactional(readOnly = true)
     public ContestResponse getById(UUID id) {
+        Optional<ContestResponse> cached = cacheService.get(
+                String.format(CONTEST_CACHE_KEY, id), ContestResponse.class);
+        if (cached.isPresent()) {
+            log.debug("Cache hit for contest {}", id);
+            return cached.get();
+        }
+
         Contest contest = findContestById(id);
-        return toResponse(contest);
+        ContestResponse response = toResponse(contest);
+        cacheContest(id, response);
+        return response;
     }
 
     @Override
@@ -108,7 +127,9 @@ public class ContestServiceImpl implements ContestService {
         contest = contestRepository.save(contest);
 
         log.info("Contest scheduled id={}", contestId);
-        return toResponse(contest);
+        ContestResponse response = toResponse(contest);
+        cacheContest(contestId, response);
+        return response;
     }
 
     @Override
@@ -124,6 +145,7 @@ public class ContestServiceImpl implements ContestService {
         contest = contestRepository.save(contest);
 
         log.info("Contest cancelled id={}", contestId);
+        evictContestCache(contestId);
         return toResponse(contest);
     }
 
@@ -151,6 +173,7 @@ public class ContestServiceImpl implements ContestService {
         participant.setUserId(userId);
         participantRepository.save(participant);
 
+        evictContestCache(contestId);
         log.info("User {} registered for contest {}", userId, contestId);
     }
 
@@ -165,10 +188,17 @@ public class ContestServiceImpl implements ContestService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public boolean isParticipant(UUID contestId, UUID userId) {
+        return participantRepository.existsByContestIdAndUserId(contestId, userId);
+    }
+
+    @Override
     public void activate(UUID contestId) {
         Contest contest = findContestById(contestId);
         contest.setStatus(ContestStatus.ACTIVE);
         contestRepository.save(contest);
+        evictContestCache(contestId);
         log.info("Contest activated id={}", contestId);
     }
 
@@ -177,6 +207,7 @@ public class ContestServiceImpl implements ContestService {
         Contest contest = findContestById(contestId);
         contest.setStatus(ContestStatus.COMPLETED);
         contestRepository.save(contest);
+        evictContestCache(contestId);
         log.info("Contest completed id={}", contestId);
     }
 
@@ -206,6 +237,14 @@ public class ContestServiceImpl implements ContestService {
             sb.append(INVITE_CHARS.charAt(secureRandom.nextInt(INVITE_CHARS.length())));
         }
         return sb.toString();
+    }
+
+    private void cacheContest(UUID contestId, ContestResponse response) {
+        cacheService.put(String.format(CONTEST_CACHE_KEY, contestId), response, CONTEST_CACHE_TTL);
+    }
+
+    private void evictContestCache(UUID contestId) {
+        cacheService.evict(String.format(CONTEST_CACHE_KEY, contestId));
     }
 
     private ContestResponse toResponse(Contest contest) {
