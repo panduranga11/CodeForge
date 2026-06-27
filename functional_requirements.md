@@ -1,7 +1,7 @@
 # Functional Requirements Document (FRD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.5
+**Version:** 1.6
 **Status:** Draft
 **Date:** 2026-06-27
 **Changes:**
@@ -10,6 +10,7 @@
 - v1.3: Aligned all service references with v1.5 HLD architecture — replaced "Assessment Service" with "Contest Service" / "Execution Service" throughout traceability matrix; removed stale "organisation" references; updated FR-CONT-010 to allow join during ACTIVE state
 - v1.4: Scoped problems to contests (no standalone problem library); problems carry `points` + `sequenceNo` and a `contest_id`, `visibility` removed from problems; updated FR-PROB-001..007 and FR-CONT-002 actors to "Contest Host"; marked Problem/Contest requirements as Implemented
 - v1.5: Aligned with actual execution service implementation — code size limit updated to 64KB; execution uses ProcessBuilder with security validation (Docker sandbox planned); rate limit updated to 10/10min; leaderboard uses Redis sorted sets + WebSocket; marked FR-SUB-001..006, FR-LEAD-001, FR-ANAL-002 as Implemented
+- v1.6: All Contest Service timestamps now use `Instant` (UTC) instead of `LocalDateTime`; marked Auth features as Implemented (FR-AUTH-001 through FR-AUTH-010); marked contest management features as Implemented (FR-CONT-003 through FR-CONT-011); marked Analytics (FR-ANAL-001) as Implemented; FR-CONT-003 auto-activation uses `ContestLifecycleScheduler` (30s polling) with `Instant.now()` comparisons
 
 ---
 
@@ -687,14 +688,15 @@ Organizers must explicitly schedule a contest, transitioning it from `DRAFT` →
 **Functional Steps:**
 1. System validates all required fields
 2. System transitions status to `SCHEDULED`
-3. System schedules a background job to auto-activate the contest at start time
-4. System schedules a background job to auto-complete the contest at end time
+3. `ContestLifecycleScheduler` (polling every 30 seconds) auto-activates the contest when `startTime <= Instant.now()`
+4. `ContestLifecycleScheduler` auto-completes the contest when `endTime <= Instant.now()`
 
 **Acceptance Criteria:**
-- [ ] `SCHEDULED` contest is visible to participants for registration (if `PUBLIC`)
-- [ ] Auto-activation triggers at exact start time (±30 seconds tolerance)
-- [ ] Auto-completion locks submissions at exact end time
-- [ ] Returns HTTP 200 with updated contest
+- [x] `SCHEDULED` contest is visible to participants for registration (if `PUBLIC`)
+- [x] Auto-activation triggers at start time (±30 seconds tolerance via polling scheduler)
+- [x] Auto-completion locks submissions at end time
+- [x] Returns HTTP 200 with updated contest
+- [x] All timestamps use `Instant` (UTC) — no timezone ambiguity
 
 ---
 
@@ -1413,16 +1415,16 @@ Students must have a personal dashboard showing their performance history.
 
 | Req ID | Feature | Service | Priority | Status |
 |---|---|---|---|---|
-| FR-AUTH-001 | User Registration (Credential + OAuth path) | Auth Service | HIGH | Planned |
-| FR-AUTH-002 | User Login (Credential + OAuth path) | Auth Service | HIGH | Planned |
-| FR-AUTH-003 | Token Refresh | Auth Service | HIGH | Planned |
-| FR-AUTH-004 | User Logout | Auth Service | MEDIUM | Planned |
-| FR-AUTH-005 | View Profile | Auth Service | MEDIUM | Planned |
-| FR-AUTH-006 | Update Profile | Auth Service | MEDIUM | Planned |
-| FR-AUTH-007 | RBAC Enforcement | Gateway + All | HIGH | Planned |
-| FR-AUTH-008 | Self-Service Organizer Upgrade | Auth Service | HIGH | Planned |
-| **FR-AUTH-009** | **OAuth2 Login (Google / GitHub)** | **Auth Service** | **HIGH** | **Planned** |
-| **FR-AUTH-010** | **Link / Unlink OAuth Provider** | **Auth Service** | **MEDIUM** | **Planned** |
+| FR-AUTH-001 | User Registration (Credential + OAuth path) | Auth Service | HIGH | Implemented |
+| FR-AUTH-002 | User Login (Credential + OAuth path) | Auth Service | HIGH | Implemented |
+| FR-AUTH-003 | Token Refresh | Auth Service | HIGH | Implemented |
+| FR-AUTH-004 | User Logout | Auth Service | MEDIUM | Implemented |
+| FR-AUTH-005 | View Profile | Auth Service | MEDIUM | Implemented |
+| FR-AUTH-006 | Update Profile | Auth Service | MEDIUM | Implemented |
+| FR-AUTH-007 | RBAC Enforcement | Gateway + All | HIGH | Implemented |
+| FR-AUTH-008 | Self-Service Organizer Upgrade | Auth Service | HIGH | Implemented |
+| **FR-AUTH-009** | **OAuth2 Login (Google / GitHub)** | **Auth Service** | **HIGH** | **Implemented** |
+| **FR-AUTH-010** | **Link / Unlink OAuth Provider** | **Auth Service** | **MEDIUM** | **Implemented** |
 | FR-PROB-001 | Create Problem (within contest) | Contest Service | HIGH | Implemented |
 | FR-PROB-002 | Add Test Cases | Contest Service | HIGH | Implemented |
 | FR-PROB-003 | Publish Problem | Contest Service | HIGH | Implemented |
@@ -1432,15 +1434,15 @@ Students must have a personal dashboard showing their performance history.
 | FR-PROB-007 | Delete Problem | Contest Service | LOW | Implemented |
 | FR-CONT-001 | Create Contest | Contest Service | HIGH | Implemented |
 | FR-CONT-002 | Manage Contest Problems | Contest Service | HIGH | Implemented |
-| FR-CONT-003 | Schedule Contest | Contest Service | HIGH | Planned |
-| FR-CONT-004 | Cancel Contest | Contest Service | MEDIUM | Planned |
-| FR-CONT-005 | Participant Registration | Contest Service | HIGH | Planned |
-| FR-CONT-006 | View Contest Details | Contest Service | HIGH | Planned |
-| FR-CONT-007 | View Contest Problems | Contest Service | HIGH | Planned |
-| FR-CONT-008 | List Contests | Contest Service | HIGH | Planned |
-| FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Contest Service | HIGH | Planned |
-| FR-CONT-010 | Join via Invite Link / Code | Contest Service | HIGH | Planned |
-| FR-CONT-011 | Public Contest Discovery | Contest Service | HIGH | Planned |
+| FR-CONT-003 | Schedule Contest | Contest Service | HIGH | Implemented |
+| FR-CONT-004 | Cancel Contest | Contest Service | MEDIUM | Implemented |
+| FR-CONT-005 | Participant Registration | Contest Service | HIGH | Implemented |
+| FR-CONT-006 | View Contest Details | Contest Service | HIGH | Implemented |
+| FR-CONT-007 | View Contest Problems | Contest Service | HIGH | Implemented |
+| FR-CONT-008 | List Contests | Contest Service | HIGH | Implemented |
+| FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Contest Service | HIGH | Implemented |
+| FR-CONT-010 | Join via Invite Link / Code | Contest Service | HIGH | Implemented |
+| FR-CONT-011 | Public Contest Discovery | Contest Service | HIGH | Implemented |
 | FR-SUB-001 | Submit Code | Execution Service | HIGH | Implemented |
 | FR-SUB-002 | Verdict Generation | Execution Engine | HIGH | Implemented |
 | FR-SUB-003 | Language Support | Execution Engine | HIGH | Implemented |
@@ -1454,7 +1456,7 @@ Students must have a personal dashboard showing their performance history.
 | FR-AI-003 | AI Hint Generation | AI Service | HIGH | Planned |
 | FR-AI-004 | Learning Roadmap | AI Service | MEDIUM | Planned |
 | FR-AI-005 | Interview Prep Questions | AI Service | LOW | Planned |
-| FR-ANAL-001 | Contest Analytics | Contest Service | MEDIUM | Planned |
+| FR-ANAL-001 | Contest Analytics | Contest Service | MEDIUM | Implemented |
 | FR-ANAL-002 | User Performance Dashboard | Contest Service | MEDIUM | Implemented |
 
 ---
@@ -1474,7 +1476,8 @@ Students must have a personal dashboard showing their performance history.
 | 1.3 | 2026-06-24 | Aligned with HLD v1.5: replaced all "Assessment Service" → "Contest Service"/"Execution Service"; removed stale org references; updated FR-CONT-010 join conditions |
 | 1.4 | 2026-06-25 | Scoped problems to contests; marked Problem/Contest requirements as Implemented |
 | 1.5 | 2026-06-27 | Aligned with execution service implementation: code size 64KB, ProcessBuilder execution, rate limit 10/10min, Redis sorted sets + WebSocket leaderboard; marked FR-SUB-*, FR-LEAD-001, FR-ANAL-002 as Implemented |
+| 1.6 | 2026-06-27 | All Contest Service timestamps use `Instant` (UTC); marked FR-AUTH-001–010 as Implemented; marked FR-CONT-003–011 as Implemented; marked FR-ANAL-001 as Implemented; FR-CONT-003 auto-activation uses `ContestLifecycleScheduler` (30s polling) |
 
 ---
 
-*Document Version: 1.5 | CodeForge Platform*
+*Document Version: 1.6 | CodeForge Platform*

@@ -1,7 +1,7 @@
 # Low Level Design (LLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.3
+**Version:** 1.4
 **Status:** Draft
 **Date:** 2026-06-27
 **Based on:** HLD v1.7
@@ -11,6 +11,7 @@
 - v1.1: Scoped problems to contests — `Problem` gains `contest_id`, `points`, `sequenceNo` and drops `visibility`; removed `ContestProblem` entity/repository/table; nested problem API contracts and repositories under a contest; corrected Problem/Contest DTOs to match implementation; updated sequence diagrams and the Contest Hosting flow (Facade deferred to v2)
 - v1.2: Execution Service hardening — removed `problemsSolved` from `SubmissionCompletedEvent` (computed by leaderboard consumer); added `@Size(max=50000)` to `sourceCode`; simplified `TestCaseDto` (removed per-test-case limits, added `scoreWeight`); added DLQ + retry policy for RabbitMQ; added stale submission sweeper
 - v1.3: Aligned with actual implementation — RestTemplate replaced with OpenFeign (`ContestServiceClient`); leaderboard entity gains `solvedProblemIds` column; Kafka consumers split into `LeaderboardKafkaConsumer` and `AnalyticsKafkaConsumer`; added `CacheService`, `RedisConfig`, `WebSocketConfig` to contest service; execution uses ProcessBuilder (not Docker); rate limit 10/10min; `SubmissionMessage` gains `points` field; `StaleSubmissionSweeper` marks as RE not FAILED; updated sequence diagram to show OpenFeign and ProcessBuilder
+- v1.4: All Contest Service timestamps changed from `LocalDateTime` to `Instant` (UTC) across entities, DTOs, and API contracts; renamed `ContestSchedulerService` → `ContestLifecycleScheduler` to match implementation; added `ContestRepository` scheduler query methods (`findByStatusAndStartTimeBefore`, `findByStatusAndEndTimeBefore`); `GlobalExceptionHandler` gains `IllegalArgumentException`, `DataIntegrityViolationException`, `HttpMessageNotReadableException` handlers; `ApiResponse.timestamp` is now `Instant`; `LeaderboardResponse` drops `fullName` (resolved at frontend); `@EnableScheduling` on `ContestServiceApplication`; updated API contract examples to use ISO-8601 UTC timestamps
 
 ---
 
@@ -95,6 +96,8 @@ Indexes:
 
 ### 1.2 Contest Database (`contest_db`)
 
+> **Timestamp convention:** All timestamps in contest_db use `Instant` (UTC) — stored as `TIMESTAMP WITH TIME ZONE` in PostgreSQL. The Java type is `java.time.Instant`, not `LocalDateTime`.
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                  problems  (scoped to a contest)                 │
@@ -119,9 +122,9 @@ Indexes:
 │ sequence_no      │ INTEGER  NOT NULL  (display order in contest)  │
 │ status           │ ENUM(DRAFT, PUBLISHED)  DEFAULT DRAFT          │
 │ created_by       │ UUID  NOT NULL  (user_id from auth_db, no FK)  │
-│ created_at       │ TIMESTAMP  NOT NULL                            │
-│ updated_at       │ TIMESTAMP  NOT NULL                            │
-│ deleted_at       │ TIMESTAMP  NULL  (soft delete)                 │
+│ created_at       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
+│ updated_at       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
+│ deleted_at       │ TIMESTAMPTZ  NULL  (Instant, soft delete)      │
 └──────────────────────────────────────────────────────────────────┘
          │ 1
          │
@@ -135,7 +138,7 @@ Indexes:
 │ expected_output  │ TEXT  NOT NULL                                 │
 │ type             │ ENUM(SAMPLE, HIDDEN)  NOT NULL                 │
 │ score_weight     │ INTEGER  DEFAULT 1                             │
-│ created_at       │ TIMESTAMP  NOT NULL                            │
+│ created_at       │ TIMESTAMPTZ  NOT NULL  (Instant, @PrePersist)  │
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
@@ -144,8 +147,8 @@ Indexes:
 │ id               │ UUID  PK                                       │
 │ title            │ VARCHAR(200)  NOT NULL                         │
 │ description      │ TEXT  (Markdown, max 5000 chars)               │
-│ start_time       │ TIMESTAMP  NOT NULL                            │
-│ end_time         │ TIMESTAMP  NOT NULL                            │
+│ start_time       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
+│ end_time         │ TIMESTAMPTZ  NOT NULL  (Instant)               │
 │ status           │ ENUM(DRAFT, SCHEDULED, ACTIVE,                 │
 │                  │      COMPLETED, CANCELLED)  DEFAULT DRAFT      │
 │ visibility       │ ENUM(PUBLIC, PRIVATE)  NOT NULL                │
@@ -153,12 +156,12 @@ Indexes:
 │ scoring_mode     │ ENUM(POINTS, PENALTY_TIME, PERCENTAGE) NOT NULL│
 │ max_participants │ INTEGER  NULL  (unlimited if null)             │
 │ invite_code      │ VARCHAR(8)  UNIQUE  NULL                       │
-│ invite_link      │ VARCHAR(255)  NULL                             │
+│ invite_link      │ VARCHAR(500)  NULL                             │
 │ host_id          │ UUID  NOT NULL  (user_id from auth_db, no FK)  │
 │ created_by       │ UUID  NOT NULL  (user_id from auth_db, no FK)  │
-│ created_at       │ TIMESTAMP  NOT NULL                            │
-│ updated_at       │ TIMESTAMP  NOT NULL                            │
-│ deleted_at       │ TIMESTAMP  NULL  (soft delete)                 │
+│ created_at       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
+│ updated_at       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
+│ deleted_at       │ TIMESTAMPTZ  NULL  (Instant, soft delete)      │
 └──────────────────────────────────────────────────────────────────┘
                                                │ 1
                                                │
@@ -171,7 +174,8 @@ Indexes:
                                   │              │ contests.id      │
                                   │ user_id      │ UUID  NOT NULL   │
                                   │              │ (no FK cross-db) │
-                                  │ registered_at│ TIMESTAMP        │
+                                  │ registered_at│ TIMESTAMPTZ      │
+                                  │              │ (Instant)        │
                                   │UNIQUE(contest_id, user_id)      │
                                   └─────────────────────────────────┘
 
@@ -186,8 +190,8 @@ Indexes:
 │ penalty_time     │ INTEGER  DEFAULT 0  (minutes)                  │
 │ problems_solved  │ INTEGER  DEFAULT 0                             │
 │ solved_problem_ids│ VARCHAR(2000) NULL  (comma-separated UUIDs)   │
-│ last_ac_time     │ TIMESTAMP  NULL                                │
-│ updated_at       │ TIMESTAMP  NOT NULL                            │
+│ last_ac_time     │ TIMESTAMPTZ  NULL  (Instant)                   │
+│ updated_at       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
 │                  │ UNIQUE(contest_id, user_id)                    │
 └──────────────────────────────────────────────────────────────────┘
 
@@ -600,7 +604,7 @@ class OAuth2Controller {
 @Entity @Table(name = "problems")
 class Problem {
     UUID            id;
-    Contest         contest;         // @ManyToOne → contests table
+    Contest         contest;         // @ManyToOne(fetch = LAZY) → contests table
     String          title;           // VARCHAR(200)
     String          description;     // TEXT (Markdown)
     Difficulty      difficulty;      // ENUM: EASY | MEDIUM | HARD
@@ -616,21 +620,21 @@ class Problem {
     int             sequenceNo;      // display order within the contest
     ProblemStatus   status;          // ENUM: DRAFT | PUBLISHED
     UUID            createdBy;       // user_id from auth_db (no FK)
-    LocalDateTime   deletedAt;       // soft delete
-    List<TestCase>  testCases;       // @OneToMany
-    // audit: createdAt, updatedAt
+    Instant         deletedAt;       // soft delete (UTC)
+    List<TestCase>  testCases;       // @OneToMany(cascade=ALL, orphanRemoval=true)
+    // audit: Instant createdAt (@CreatedDate), Instant updatedAt (@LastModifiedDate)
 }
 
 // ── test_cases table
 @Entity @Table(name = "test_cases")
 class TestCase {
     UUID         id;
-    Problem      problem;        // @ManyToOne
+    Problem      problem;        // @ManyToOne(fetch = LAZY)
     String       input;
     String       expectedOutput;
     TestCaseType type;           // ENUM: SAMPLE | HIDDEN
     int          scoreWeight;
-    LocalDateTime createdAt;
+    Instant      createdAt;      // UTC, set via @PrePersist
 }
 
 // ── contests table
@@ -639,19 +643,19 @@ class Contest {
     UUID          id;
     String        title;
     String        description;
-    LocalDateTime startTime;
-    LocalDateTime endTime;
+    Instant       startTime;     // UTC
+    Instant       endTime;       // UTC
     ContestStatus status;        // ENUM: DRAFT|SCHEDULED|ACTIVE|COMPLETED|CANCELLED
     Visibility    visibility;
     RegType       regType;       // ENUM: OPEN | INVITE_ONLY
     ScoringMode   scoringMode;   // ENUM: POINTS | PENALTY_TIME | PERCENTAGE
     Integer       maxParticipants;  // nullable
     String        inviteCode;    // 8-char unique string, nullable
-    String        inviteLink;    // full URL, nullable
+    String        inviteLink;    // full URL (VARCHAR 500), nullable
     UUID          hostId;        // user_id from auth_db (no FK)
     UUID          createdBy;     // user_id from auth_db (no FK)
-    LocalDateTime deletedAt;     // soft delete
-    // audit: createdAt, updatedAt, createdBy (auditing field)
+    Instant       deletedAt;     // soft delete (UTC)
+    // audit: Instant createdAt (@CreatedDate), Instant updatedAt (@LastModifiedDate)
 }
 
 // ── contest_problems table — REMOVED
@@ -661,9 +665,9 @@ class Contest {
 @Entity @Table(name = "contest_participants")
 class ContestParticipant {
     UUID          id;
-    Contest       contest;       // @ManyToOne
+    Contest       contest;       // @ManyToOne(fetch = LAZY)
     UUID          userId;        // user_id from auth_db (no FK)
-    LocalDateTime registeredAt;
+    Instant       registeredAt;  // UTC, set via @PrePersist
     // UNIQUE(contest_id, user_id)
 }
 
@@ -671,15 +675,15 @@ class ContestParticipant {
 @Entity @Table(name = "leaderboard")
 class Leaderboard {
     UUID          id;
-    Contest       contest;       // @ManyToOne
+    Contest       contest;       // @ManyToOne(fetch = LAZY)
     UUID          userId;        // user_id from auth_db (no FK)
     int           rank;
     int           score;
     int           penaltyTime;   // minutes
     int           problemsSolved;
     String        solvedProblemIds; // comma-separated UUIDs (VARCHAR 2000)
-    LocalDateTime lastAcTime;    // nullable
-    LocalDateTime updatedAt;
+    Instant       lastAcTime;    // nullable, UTC
+    Instant       updatedAt;     // UTC, set via @PrePersist/@PreUpdate
     // UNIQUE(contest_id, user_id)
 
     boolean hasAlreadySolved(UUID problemId);  // checks solvedProblemIds
@@ -726,6 +730,9 @@ interface ContestRepository extends JpaRepository<Contest, UUID> {
                             ContestStatus s, Visibility v, Pageable p);
     List<Contest>       findByHostIdAndDeletedAtIsNull(UUID hostId);
     Optional<Contest>   findByIdAndDeletedAtIsNull(UUID id);
+    // Used by ContestLifecycleScheduler for auto-transitions
+    List<Contest>       findByStatusAndStartTimeBefore(ContestStatus status, Instant time);
+    List<Contest>       findByStatusAndEndTimeBefore(ContestStatus status, Instant time);
 }
 
 interface ContestParticipantRepository extends JpaRepository<ContestParticipant, UUID> {
@@ -869,19 +876,33 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 #### Scheduler (Contest Lifecycle)
 
 ```java
-@Service
-class ContestSchedulerService {
-    // Uses Spring @Scheduled or Quartz; scans every minute
-    @Scheduled(fixedRate = 30_000)
-    void activateDueContests() {
-        // Fetch contests with status=SCHEDULED and startTime <= now
-        // Transition to ACTIVE; publish ContestActivatedEvent to Kafka
-    }
+// Requires @EnableScheduling on ContestServiceApplication
+@Component
+class ContestLifecycleScheduler {
+    private final ContestRepository contestRepository;
 
     @Scheduled(fixedRate = 30_000)
-    void completeExpiredContests() {
-        // Fetch contests with status=ACTIVE and endTime <= now
-        // Transition to COMPLETED; freeze leaderboard; publish ContestCompletedEvent
+    @Transactional
+    void transitionContests() {
+        Instant now = Instant.now();
+
+        // SCHEDULED → ACTIVE (startTime has passed)
+        List<Contest> toActivate = contestRepository
+                .findByStatusAndStartTimeBefore(ContestStatus.SCHEDULED, now);
+        for (Contest contest : toActivate) {
+            contest.setStatus(ContestStatus.ACTIVE);
+            contestRepository.save(contest);
+            log.info("Contest auto-activated id={} title={}", contest.getId(), contest.getTitle());
+        }
+
+        // ACTIVE → COMPLETED (endTime has passed)
+        List<Contest> toComplete = contestRepository
+                .findByStatusAndEndTimeBefore(ContestStatus.ACTIVE, now);
+        for (Contest contest : toComplete) {
+            contest.setStatus(ContestStatus.COMPLETED);
+            contestRepository.save(contest);
+            log.info("Contest auto-completed id={} title={}", contest.getId(), contest.getTitle());
+        }
     }
 }
 ```
@@ -914,7 +935,7 @@ record ProblemResponse(
     String constraintsText, String explanation,
     String tags, int points, int sequenceNo, String status,
     List<TestCaseResponse> sampleTestCases,  // SAMPLE only, never HIDDEN
-    LocalDateTime createdAt
+    Instant createdAt                        // UTC
 ) {}
 
 record CreateTestCaseRequest(
@@ -924,12 +945,12 @@ record CreateTestCaseRequest(
     int scoreWeight
 ) {}
 
-// Contest DTOs
+// Contest DTOs — all timestamps are Instant (UTC, ISO-8601)
 record CreateContestRequest(
     @NotBlank @Size(min=5, max=200) String title,
     @NotBlank @Size(max=5000) String description,
-    @NotNull LocalDateTime          startTime,
-    @NotNull LocalDateTime          endTime,
+    @NotNull Instant                startTime,      // UTC
+    @NotNull Instant                endTime,        // UTC
     @NotNull String                 visibility,     // PUBLIC | PRIVATE
     @NotNull String                 regType,        // OPEN | INVITE_ONLY
     @NotNull String                 scoringMode,    // POINTS | PENALTY_TIME | PERCENTAGE
@@ -939,11 +960,11 @@ record CreateContestRequest(
 
 record ContestResponse(
     UUID id, String title, String description,
-    LocalDateTime startTime, LocalDateTime endTime,
+    Instant startTime, Instant endTime,             // UTC
     String status, String visibility, String regType, String scoringMode,
     Integer maxParticipants, String inviteCode, String inviteLink,
     UUID hostId, long participantCount, long problemCount,
-    LocalDateTime createdAt
+    Instant createdAt                               // UTC
 ) {}
 
 record JoinContestRequest(
@@ -955,9 +976,9 @@ record JoinContestResponse(
 ) {}
 
 record LeaderboardResponse(
-    int rank, UUID userId, String fullName,
+    int rank, UUID userId,
     int score, int penaltyTime, int problemsSolved,
-    LocalDateTime lastAcTime
+    Instant lastAcTime                              // UTC
 ) {}
 ```
 
@@ -1718,42 +1739,42 @@ Client    API GW    AI Svc    ai_db    Exec Svc (internal)    LLM (OpenAI/Gemini
 ### 3.9 Contest Lifecycle (Scheduler)
 
 ```
-ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
-         │                     │           │                  │
-  [Every 30 seconds]           │           │                  │
-         │                     │           │                  │
-         │─SELECT contests WHERE status=SCHEDULED AND startTime<=now
-         │◄── [ contest list ] ────────────────────────────── │
-         │                     │           │                  │
-  [For each due contest:]      │           │                  │
-         │─UPDATE status=ACTIVE───────────►│                  │
-         │─publish ContestActivatedEvent──────────────────────►│
-         │                     │           │                  │
-  [Every 30 seconds]           │           │                  │
-         │                     │           │                  │
-         │─SELECT contests WHERE status=ACTIVE AND endTime<=now
-         │◄── [ contest list ] ────────────────────────────── │
-         │                     │           │                  │
-  [For each expired contest:]  │           │                  │
-         │─UPDATE status=COMPLETED──────────►│                │
-         │─lock submissions (application-level check)         │
-         │─freeze leaderboard (mark final)──►│                │
-         │─publish ContestCompletedEvent─────────────────────►│
-         │                     │           │         │─update final analytics
+ContestLifecycleScheduler    contest_db
+         │                       │
+  [@Scheduled(fixedRate=30000)]  │
+  [@Transactional]               │
+         │                       │
+         │─findByStatusAndStartTimeBefore(SCHEDULED, Instant.now())
+         │◄── [ contests to activate ] ──│
+         │                       │
+  [For each due contest:]        │
+         │─contest.setStatus(ACTIVE)     │
+         │─save(contest)─────────────────►│
+         │─log.info("Contest auto-activated id={} title={}")
+         │                       │
+         │─findByStatusAndEndTimeBefore(ACTIVE, Instant.now())
+         │◄── [ contests to complete ] ──│
+         │                       │
+  [For each expired contest:]    │
+         │─contest.setStatus(COMPLETED)  │
+         │─save(contest)─────────────────►│
+         │─log.info("Contest auto-completed id={} title={}")
 ```
+
+> **Note:** Kafka event publishing for contest lifecycle (ACTIVATED/COMPLETED) is planned for v2 when the Execution Service is integrated. Currently the scheduler only transitions status and logs.
 
 ---
 
 ## 4. API Contracts
 
-> All responses are wrapped in `ApiResponse<T>`:
+> All responses are wrapped in `ApiResponse<T>` (timestamp is `Instant`/UTC):
 > ```json
 > {
 >   "success": true,
 >   "message": "...",
 >   "errorCode": null,
 >   "data": { },
->   "timestamp": "2026-06-19T00:00:00"
+>   "timestamp": "2026-06-19T00:00:00Z"
 > }
 > ```
 > All error responses follow:
@@ -1763,9 +1784,10 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
 >   "message": "Error description",
 >   "errorCode": "ERROR_CODE",
 >   "data": null,
->   "timestamp": "2026-06-19T00:00:00"
+>   "timestamp": "2026-06-19T00:00:00Z"
 > }
 > ```
+> **Note:** `null` fields are omitted from JSON output (`@JsonInclude(NON_NULL)`). The `timestamp` field uses ISO-8601 UTC format (trailing `Z`).
 
 ---
 
@@ -1797,7 +1819,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
       "status": "ACTIVE",
       "avatarUrl": null,
       "authType": "LOCAL",
-      "createdAt": "2026-06-19T00:00:00"
+      "createdAt": "2026-06-19T00:00:00Z"
     }
   }
 }
@@ -1909,7 +1931,7 @@ ContestSchedulerService    contest_db    Kafka     Contest Svc (LB/Analytics)
     "status": "ACTIVE",
     "avatarUrl": null,
     "authType": "LOCAL",
-    "createdAt": "2026-06-19T00:00:00"
+    "createdAt": "2026-06-19T00:00:00Z"
   }
 }
 ```
@@ -2038,8 +2060,8 @@ participants see only PUBLISHED problems during an ACTIVE contest.
 {
   "title": "My Weekly Contest",
   "description": "A fun contest for my friends",
-  "startTime": "2026-06-25T14:00:00",
-  "endTime": "2026-06-25T16:00:00",
+  "startTime": "2026-06-25T14:00:00Z",
+  "endTime": "2026-06-25T16:00:00Z",
   "visibility": "PRIVATE",
   "regType": "INVITE_ONLY",
   "maxParticipants": 50,
@@ -2075,8 +2097,8 @@ participants see only PUBLISHED problems during an ACTIVE contest.
     "id": "uuid-contest-...",
     "title": "My Weekly Contest",
     "hostName": "Jane Doe",
-    "startTime": "2026-06-25T14:00:00",
-    "endTime": "2026-06-25T16:00:00",
+    "startTime": "2026-06-25T14:00:00Z",
+    "endTime": "2026-06-25T16:00:00Z",
     "status": "SCHEDULED",
     "participantCount": 12,
     "problemCount": 5
@@ -2105,7 +2127,7 @@ participants see only PUBLISHED problems during an ACTIVE contest.
   "data": {
     "message": "Successfully joined!",
     "contestId": "uuid-contest-...",
-    "startTime": "2026-06-25T14:00:00",
+    "startTime": "2026-06-25T14:00:00Z",
     "problemCount": 5
   }
 }
@@ -2146,11 +2168,10 @@ participants see only PUBLISHED problems during an ACTIVE contest.
       {
         "rank": 1,
         "userId": "uuid-...",
-        "fullName": "Alice",
         "score": 300,
         "penaltyTime": 12,
         "problemsSolved": 3,
-        "lastAcTime": "2026-06-25T15:20:00"
+        "lastAcTime": "2026-06-25T15:20:00Z"
       }
     ],
     "page": 0, "size": 50, "totalElements": 120
@@ -2240,7 +2261,7 @@ participants see only PUBLISHED problems during an ACTIVE contest.
     "executionTime": 142,
     "memoryUsed": 38,
     "errorMessage": null,
-    "submittedAt": "2026-06-25T15:12:00",
+    "submittedAt": "2026-06-25T15:12:00Z",
     "testResults": [
       { "testCaseId": "uuid-tc-...", "passed": true, "executionTime": 45, "memoryUsed": 20 }
     ]
@@ -2319,7 +2340,7 @@ participants see only PUBLISHED problems during an ACTIVE contest.
       { "topic": "Dynamic Programming", "resource": "LeetCode DP Track", "url": "..." }
     ],
     "practiceProblems": ["uuid-p1", "uuid-p2"],
-    "generatedAt": "2026-06-19T00:00:00"
+    "generatedAt": "2026-06-19T00:00:00Z"
   }
 }
 ```
@@ -2753,22 +2774,24 @@ public record ContestResponse(
     UUID          id,
     String        title,
     String        description,
-    LocalDateTime startTime,
-    LocalDateTime endTime,
+    Instant       startTime,       // UTC
+    Instant       endTime,         // UTC
     String        status,
     String        visibility,
     String        inviteCode,
     String        inviteLink,
-    int           participantCount,
-    int           problemCount
+    long          participantCount,
+    long          problemCount
 ) {}
 
 // Usage in mapper
 class ContestMapper {
-    public ContestResponse toResponse(Contest c, int participantCount, int problemCount) {
+    public ContestResponse toResponse(Contest c, long participantCount, long problemCount) {
         return ContestResponse.builder()
             .id(c.getId())
             .title(c.getTitle())
+            .startTime(c.getStartTime())       // Instant (UTC)
+            .endTime(c.getEndTime())           // Instant (UTC)
             .status(c.getStatus().name())
             .visibility(c.getVisibility().name())
             .inviteCode(c.getInviteCode())
@@ -2798,5 +2821,5 @@ class ContestMapper {
 
 ---
 
-*Document Version: 1.3 | CodeForge Platform*
+*Document Version: 1.4 | CodeForge Platform*
 *Next: Implementation — Sprint 1 (Auth Service + API Gateway + Eureka)*
