@@ -1,14 +1,15 @@
 # Functional Requirements Document (FRD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.4
+**Version:** 1.5
 **Status:** Draft
-**Date:** 2026-06-25
+**Date:** 2026-06-27
 **Changes:**
 - v1.1: Added self-service Host a Contest flow (FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011)
 - v1.2: Added OAuth2 authentication via Google and GitHub (FR-AUTH-009, FR-AUTH-010)
 - v1.3: Aligned all service references with v1.5 HLD architecture — replaced "Assessment Service" with "Contest Service" / "Execution Service" throughout traceability matrix; removed stale "organisation" references; updated FR-CONT-010 to allow join during ACTIVE state
 - v1.4: Scoped problems to contests (no standalone problem library); problems carry `points` + `sequenceNo` and a `contest_id`, `visibility` removed from problems; updated FR-PROB-001..007 and FR-CONT-002 actors to "Contest Host"; marked Problem/Contest requirements as Implemented
+- v1.5: All Contest Service timestamps now use `Instant` (UTC) instead of `LocalDateTime`; marked Auth features as Implemented (FR-AUTH-001 through FR-AUTH-010); marked contest management features as Implemented (FR-CONT-003 through FR-CONT-011); marked Leaderboard (FR-LEAD-001) and Analytics (FR-ANAL-001, FR-ANAL-002) as Implemented; FR-CONT-003 auto-activation uses `ContestLifecycleScheduler` (30s polling) with `Instant.now()` comparisons
 
 ---
 
@@ -686,14 +687,15 @@ Organizers must explicitly schedule a contest, transitioning it from `DRAFT` →
 **Functional Steps:**
 1. System validates all required fields
 2. System transitions status to `SCHEDULED`
-3. System schedules a background job to auto-activate the contest at start time
-4. System schedules a background job to auto-complete the contest at end time
+3. `ContestLifecycleScheduler` (polling every 30 seconds) auto-activates the contest when `startTime <= Instant.now()`
+4. `ContestLifecycleScheduler` auto-completes the contest when `endTime <= Instant.now()`
 
 **Acceptance Criteria:**
-- [ ] `SCHEDULED` contest is visible to participants for registration (if `PUBLIC`)
-- [ ] Auto-activation triggers at exact start time (±30 seconds tolerance)
-- [ ] Auto-completion locks submissions at exact end time
-- [ ] Returns HTTP 200 with updated contest
+- [x] `SCHEDULED` contest is visible to participants for registration (if `PUBLIC`)
+- [x] Auto-activation triggers at start time (±30 seconds tolerance via polling scheduler)
+- [x] Auto-completion locks submissions at end time
+- [x] Returns HTTP 200 with updated contest
+- [x] All timestamps use `Instant` (UTC) — no timezone ambiguity
 
 ---
 
@@ -1411,16 +1413,16 @@ Students must have a personal dashboard showing their performance history.
 
 | Req ID | Feature | Service | Priority | Status |
 |---|---|---|---|---|
-| FR-AUTH-001 | User Registration (Credential + OAuth path) | Auth Service | HIGH | Planned |
-| FR-AUTH-002 | User Login (Credential + OAuth path) | Auth Service | HIGH | Planned |
-| FR-AUTH-003 | Token Refresh | Auth Service | HIGH | Planned |
-| FR-AUTH-004 | User Logout | Auth Service | MEDIUM | Planned |
-| FR-AUTH-005 | View Profile | Auth Service | MEDIUM | Planned |
-| FR-AUTH-006 | Update Profile | Auth Service | MEDIUM | Planned |
-| FR-AUTH-007 | RBAC Enforcement | Gateway + All | HIGH | Planned |
-| FR-AUTH-008 | Self-Service Organizer Upgrade | Auth Service | HIGH | Planned |
-| **FR-AUTH-009** | **OAuth2 Login (Google / GitHub)** | **Auth Service** | **HIGH** | **Planned** |
-| **FR-AUTH-010** | **Link / Unlink OAuth Provider** | **Auth Service** | **MEDIUM** | **Planned** |
+| FR-AUTH-001 | User Registration (Credential + OAuth path) | Auth Service | HIGH | Implemented |
+| FR-AUTH-002 | User Login (Credential + OAuth path) | Auth Service | HIGH | Implemented |
+| FR-AUTH-003 | Token Refresh | Auth Service | HIGH | Implemented |
+| FR-AUTH-004 | User Logout | Auth Service | MEDIUM | Implemented |
+| FR-AUTH-005 | View Profile | Auth Service | MEDIUM | Implemented |
+| FR-AUTH-006 | Update Profile | Auth Service | MEDIUM | Implemented |
+| FR-AUTH-007 | RBAC Enforcement | Gateway + All | HIGH | Implemented |
+| FR-AUTH-008 | Self-Service Organizer Upgrade | Auth Service | HIGH | Implemented |
+| **FR-AUTH-009** | **OAuth2 Login (Google / GitHub)** | **Auth Service** | **HIGH** | **Implemented** |
+| **FR-AUTH-010** | **Link / Unlink OAuth Provider** | **Auth Service** | **MEDIUM** | **Implemented** |
 | FR-PROB-001 | Create Problem (within contest) | Contest Service | HIGH | Implemented |
 | FR-PROB-002 | Add Test Cases | Contest Service | HIGH | Implemented |
 | FR-PROB-003 | Publish Problem | Contest Service | HIGH | Implemented |
@@ -1430,30 +1432,30 @@ Students must have a personal dashboard showing their performance history.
 | FR-PROB-007 | Delete Problem | Contest Service | LOW | Implemented |
 | FR-CONT-001 | Create Contest | Contest Service | HIGH | Implemented |
 | FR-CONT-002 | Manage Contest Problems | Contest Service | HIGH | Implemented |
-| FR-CONT-003 | Schedule Contest | Contest Service | HIGH | Planned |
-| FR-CONT-004 | Cancel Contest | Contest Service | MEDIUM | Planned |
-| FR-CONT-005 | Participant Registration | Contest Service | HIGH | Planned |
-| FR-CONT-006 | View Contest Details | Contest Service | HIGH | Planned |
-| FR-CONT-007 | View Contest Problems | Contest Service | HIGH | Planned |
-| FR-CONT-008 | List Contests | Contest Service | HIGH | Planned |
-| FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Contest Service | HIGH | Planned |
-| FR-CONT-010 | Join via Invite Link / Code | Contest Service | HIGH | Planned |
-| FR-CONT-011 | Public Contest Discovery | Contest Service | HIGH | Planned |
+| FR-CONT-003 | Schedule Contest | Contest Service | HIGH | Implemented |
+| FR-CONT-004 | Cancel Contest | Contest Service | MEDIUM | Implemented |
+| FR-CONT-005 | Participant Registration | Contest Service | HIGH | Implemented |
+| FR-CONT-006 | View Contest Details | Contest Service | HIGH | Implemented |
+| FR-CONT-007 | View Contest Problems | Contest Service | HIGH | Implemented |
+| FR-CONT-008 | List Contests | Contest Service | HIGH | Implemented |
+| FR-CONT-009 | Host a Contest (Self-Service) | Auth Service + Contest Service | HIGH | Implemented |
+| FR-CONT-010 | Join via Invite Link / Code | Contest Service | HIGH | Implemented |
+| FR-CONT-011 | Public Contest Discovery | Contest Service | HIGH | Implemented |
 | FR-SUB-001 | Submit Code | Execution Service | HIGH | Planned |
 | FR-SUB-002 | Verdict Generation | Execution Engine | HIGH | Planned |
 | FR-SUB-003 | Language Support | Execution Engine | HIGH | Planned |
 | FR-SUB-004 | View Submission Result | Execution Service | HIGH | Planned |
 | FR-SUB-005 | Submission History | Execution Service | MEDIUM | Planned |
 | FR-SUB-006 | Rate Limiting | Execution Service + Redis | MEDIUM | Planned |
-| FR-LEAD-001 | Contest Leaderboard | Contest Service | HIGH | Planned |
+| FR-LEAD-001 | Contest Leaderboard | Contest Service | HIGH | Implemented |
 | FR-LEAD-002 | Global Leaderboard | Contest Service | MEDIUM | Planned |
 | FR-AI-001 | AI Code Review | AI Service | HIGH | Planned |
 | FR-AI-002 | Complexity Analysis | AI Service | HIGH | Planned |
 | FR-AI-003 | AI Hint Generation | AI Service | HIGH | Planned |
 | FR-AI-004 | Learning Roadmap | AI Service | MEDIUM | Planned |
 | FR-AI-005 | Interview Prep Questions | AI Service | LOW | Planned |
-| FR-ANAL-001 | Contest Analytics | Contest Service | MEDIUM | Planned |
-| FR-ANAL-002 | User Performance Dashboard | Contest Service | MEDIUM | Planned |
+| FR-ANAL-001 | Contest Analytics | Contest Service | MEDIUM | Implemented |
+| FR-ANAL-002 | User Performance Dashboard | Contest Service | MEDIUM | Implemented |
 
 ---
 
@@ -1470,7 +1472,9 @@ Students must have a personal dashboard showing their performance history.
 | 1.1 | 2026-06-18 | Added self-service Host a Contest flow: FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011; updated Actors table and RBAC matrix |
 | 1.2 | 2026-06-18 | Added OAuth2 authentication: FR-AUTH-009 (OAuth Login), FR-AUTH-010 (Link/Unlink Provider); updated FR-AUTH-001 and FR-AUTH-002 to include OAuth paths |
 | 1.3 | 2026-06-24 | Aligned with HLD v1.5: replaced all "Assessment Service" → "Contest Service"/"Execution Service"; removed stale org references; updated FR-CONT-010 join conditions |
+| 1.4 | 2026-06-25 | Scoped problems to contests: updated FR-PROB actors to Contest Host; FR-CONT-002 to Manage Contest Problems; marked Problem/Contest requirements as Implemented |
+| 1.5 | 2026-06-27 | All Contest Service timestamps use `Instant` (UTC); marked FR-AUTH-001–010 as Implemented (Auth Service, Gateway, Eureka deployed); marked FR-CONT-003–011 as Implemented; marked FR-LEAD-001, FR-ANAL-001, FR-ANAL-002 as Implemented; FR-CONT-003 auto-activation uses `ContestLifecycleScheduler` (30s polling) |
 
 ---
 
-*Document Version: 1.3 | CodeForge Platform*
+*Document Version: 1.5 | CodeForge Platform*
