@@ -6,7 +6,6 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -25,13 +24,10 @@ public class JwtService {
     private final JwtProperties jwtProperties;
     private final StringRedisTemplate redisTemplate;
 
-    public JwtService(JwtProperties jwtProperties,
-                      @Autowired(required = false) StringRedisTemplate redisTemplate) {
+    public JwtService(JwtProperties jwtProperties, StringRedisTemplate redisTemplate) {
         this.jwtProperties = jwtProperties;
         this.redisTemplate = redisTemplate;
-        if (redisTemplate == null) {
-            log.warn("Redis is not available — JWT blacklisting is disabled");
-        }
+        log.info("JwtService initialized with Redis blacklist support");
     }
 
     public String generateAccessToken(User user) {
@@ -71,15 +67,10 @@ public class JwtService {
     }
 
     public boolean isTokenBlacklisted(String token) {
-        if (redisTemplate == null) return false;
         return Boolean.TRUE.equals(redisTemplate.hasKey(BLACKLIST_PREFIX + token));
     }
 
     public void blacklistToken(String token) {
-        if (redisTemplate == null) {
-            log.debug("Redis unavailable — skipping token blacklist");
-            return;
-        }
         try {
             Claims claims = validateToken(token);
             long ttlMs = claims.getExpiration().getTime() - System.currentTimeMillis();
