@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -177,7 +177,7 @@ public class ProblemServiceImpl implements ProblemService {
     public void delete(UUID contestId, UUID problemId, UUID userId) {
         findContestAndVerifyHost(contestId, userId);
         Problem problem = findProblemInContest(contestId, problemId);
-        problem.setDeletedAt(LocalDateTime.now());
+        problem.setDeletedAt(Instant.now());
         problemRepository.save(problem);
         cacheService.evict(String.format(PROBLEM_CACHE_KEY, problemId));
         log.info("Problem soft-deleted id={} in contest={}", problemId, contestId);

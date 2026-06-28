@@ -6,12 +6,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Arrays;
-import java.util.Set;
+import java.time.Instant;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 @Entity
 @Table(name = "leaderboard",
@@ -48,18 +44,18 @@ public class Leaderboard {
     private int problemsSolved;
 
     @Column(name = "last_ac_time")
-    private LocalDateTime lastAcTime;
+    private Instant lastAcTime;
 
     @Column(name = "solved_problem_ids", length = 2000)
     private String solvedProblemIds;
 
     @Column(name = "updated_at", nullable = false)
-    private LocalDateTime updatedAt;
+    private Instant updatedAt;
 
     @PrePersist
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        updatedAt = Instant.now();
     }
 
     public boolean hasAlreadySolved(UUID problemId) {

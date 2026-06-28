@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -222,11 +222,11 @@ public class ContestServiceImpl implements ContestService {
         }
     }
 
-    private void validateContestTimes(LocalDateTime startTime, LocalDateTime endTime) {
-        if (startTime.isBefore(LocalDateTime.now().plusMinutes(2))) {
+    private void validateContestTimes(Instant startTime, Instant endTime) {
+        if (startTime.isBefore(Instant.now().plus(Duration.ofMinutes(2)))) {
             throw new InvalidContestStateException("Start time must be at least 2 minutes in the future");
         }
-        if (endTime.isBefore(startTime.plusMinutes(15))) {
+        if (endTime.isBefore(startTime.plus(Duration.ofMinutes(15)))) {
             throw new InvalidContestStateException("Contest duration must be at least 15 minutes");
         }
     }

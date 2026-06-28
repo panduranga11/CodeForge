@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 import lombok.Getter;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Getter
 @Builder
@@ -17,7 +17,7 @@ public class ApiResponse<T> {
     private final T data;
 
     @Builder.Default
-    private final LocalDateTime timestamp = LocalDateTime.now();
+    private final Instant timestamp = Instant.now();
 
     public static <T> ApiResponse<T> success(T data) {
         return ApiResponse.<T>builder().success(true).data(data).build();

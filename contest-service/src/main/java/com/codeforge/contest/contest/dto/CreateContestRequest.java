@@ -4,7 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 public record CreateContestRequest(
         @NotBlank @Size(min = 5, max = 200)
@@ -14,10 +14,10 @@ public record CreateContestRequest(
         String description,
 
         @NotNull
-        LocalDateTime startTime,
+        Instant startTime,
 
         @NotNull
-        LocalDateTime endTime,
+        Instant endTime,
 
         @NotNull
         String visibility,
