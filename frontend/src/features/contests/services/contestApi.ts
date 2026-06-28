@@ -7,7 +7,7 @@ import type {
 
 export const contestApi = {
   getAll: (page = 0, size = 10) =>
-    apiClient.get<ApiResponse<PageResponse<Contest>>>('/contest/v1/contests', {
+    apiClient.get<ApiResponse<PageResponse<Contest>>>('/contest/v1/contests/explore', {
       params: { page, size },
     }).then((r) => r.data),
 
@@ -15,6 +15,14 @@ export const contestApi = {
     apiClient.get<ApiResponse<PageResponse<Contest>>>('/contest/v1/contests/explore', {
       params: { page, size },
     }).then((r) => r.data),
+
+  myContests: (page = 0, size = 50) =>
+    apiClient.get<ApiResponse<PageResponse<Contest>>>('/contest/v1/contests/my', {
+      params: { page, size },
+    }).then((r) => r.data),
+
+  updateTimes: (id: string, startTime: string, endTime: string) =>
+    apiClient.patch<ApiResponse<Contest>>(`/contest/v1/contests/${id}/times`, { startTime, endTime }).then((r) => r.data),
 
   getById: (id: string) =>
     apiClient.get<ApiResponse<Contest>>(`/contest/v1/contests/${id}`).then((r) => r.data),

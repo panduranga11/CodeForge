@@ -89,7 +89,7 @@ export function LeaderboardPage() {
                   {entry.rank}
                 </span>
                 <span className={cn('text-sm font-medium truncate', isMe ? 'text-ember-400' : 'text-forge-text')}>
-                  {isMe ? `${user.fullName} (You)` : entry.userId.slice(0, 8)}
+                  {isMe ? `${entry.fullName || user.fullName} (You)` : entry.fullName || entry.userId.slice(0, 8)}
                 </span>
                 <span className="text-right text-sm font-bold text-forge-white">{entry.score}</span>
                 <span className="text-right text-sm text-forge-muted">{entry.problemsSolved}</span>

@@ -9,9 +9,9 @@ public interface ProblemService {
 
     ProblemResponse create(UUID contestId, CreateProblemRequest request, UUID userId);
 
-    ProblemResponse getById(UUID contestId, UUID problemId);
+    ProblemResponse getById(UUID contestId, UUID problemId, UUID userId);
 
-    List<ProblemResponse> listByContest(UUID contestId);
+    List<ProblemResponse> listByContest(UUID contestId, UUID userId);
 
     ProblemResponse update(UUID contestId, UUID problemId, UpdateProblemRequest request, UUID userId);
 

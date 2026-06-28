@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trophy, Clock, Users, Code, ArrowRight, CheckCircle, Play, Calendar, Plus, Rocket, XCircle, Trash2, Eye } from 'lucide-react';
+import { Trophy, Clock, Users, Code, ArrowRight, CheckCircle, Play, Calendar, Plus, Rocket, XCircle, Trash2, Eye, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { contestApi } from '@/features/contests/services/contestApi';
 import { useAuthStore } from '@/features/auth/hooks/useAuthStore';
@@ -9,7 +9,7 @@ import { qk } from '@/shared/constants/queryKeys';
 import { CONTEST_STATUS_LABEL, DIFFICULTY_LABEL } from '@/shared/constants/enums';
 import { formatDateTime } from '@/shared/lib/format';
 import {
-  PageHeader, StatCard, Badge, Card, Button, CopyButton,
+  PageHeader, StatCard, Badge, Card, Button, CopyButton, Input, Field,
   Skeleton, EmptyState, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter,
 } from '@/shared/components/ui';
 import type { AxiosError } from 'axios';
@@ -30,6 +30,9 @@ export function ContestDetailPage() {
   const navigate = useNavigate();
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [timesDialogOpen, setTimesDialogOpen] = useState(false);
+  const [newStartTime, setNewStartTime] = useState('');
+  const [newEndTime, setNewEndTime] = useState('');
 
   const { data: contestData, isLoading } = useQuery({
     queryKey: qk.contest(id!),
@@ -83,6 +86,12 @@ export function ContestDetailPage() {
     mutationFn: (problemId: string) => contestApi.deleteProblem(id!, problemId),
     onSuccess: () => { toast.success('Problem deleted'); setDeleteTarget(null); invalidate(); },
     onError: (err: AxiosError<ApiResponse<never>>) => toast.error(err.response?.data?.message ?? 'Failed to delete'),
+  });
+
+  const updateTimesMutation = useMutation({
+    mutationFn: () => contestApi.updateTimes(id!, new Date(newStartTime).toISOString(), new Date(newEndTime).toISOString()),
+    onSuccess: () => { toast.success('Times updated!'); setTimesDialogOpen(false); invalidate(); },
+    onError: (err: AxiosError<ApiResponse<never>>) => toast.error(err.response?.data?.message ?? 'Failed to update times'),
   });
 
   const contest = contestData?.data;
@@ -147,6 +156,11 @@ export function ContestDetailPage() {
             {(contest.status === 'DRAFT' || contest.status === 'SCHEDULED') && (
               <Button variant="surface" leftIcon={<Plus className="h-4 w-4" />} onClick={() => navigate(`/contests/${id}/problems/add`)}>
                 Add Problem
+              </Button>
+            )}
+            {(contest.status === 'DRAFT' || contest.status === 'SCHEDULED') && (
+              <Button variant="surface" leftIcon={<Pencil className="h-4 w-4" />} onClick={() => { setNewStartTime(''); setNewEndTime(''); setTimesDialogOpen(true); }}>
+                Update Times
               </Button>
             )}
             {(contest.status === 'DRAFT' || contest.status === 'SCHEDULED') && (
@@ -259,6 +273,27 @@ export function ContestDetailPage() {
         <DialogFooter>
           <Button variant="ghost" onClick={() => setCancelDialogOpen(false)}>Keep it</Button>
           <Button variant="danger" loading={cancelMutation.isPending} onClick={() => cancelMutation.mutate()}>Cancel Contest</Button>
+        </DialogFooter>
+      </Dialog>
+
+      {/* Update Times Dialog */}
+      <Dialog open={timesDialogOpen} onClose={() => setTimesDialogOpen(false)}>
+        <DialogHeader><DialogTitle>Update Contest Times</DialogTitle></DialogHeader>
+        <DialogBody>
+          <div className="space-y-4">
+            <Field label="Start Time" htmlFor="newStartTime" required>
+              <Input id="newStartTime" type="datetime-local" value={newStartTime} onChange={(e) => setNewStartTime(e.target.value)} />
+            </Field>
+            <Field label="End Time" htmlFor="newEndTime" required>
+              <Input id="newEndTime" type="datetime-local" value={newEndTime} onChange={(e) => setNewEndTime(e.target.value)} />
+            </Field>
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setTimesDialogOpen(false)}>Cancel</Button>
+          <Button loading={updateTimesMutation.isPending} onClick={() => updateTimesMutation.mutate()} disabled={!newStartTime || !newEndTime}>
+            Update Times
+          </Button>
         </DialogFooter>
       </Dialog>
 

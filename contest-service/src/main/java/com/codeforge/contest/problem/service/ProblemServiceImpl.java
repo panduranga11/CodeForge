@@ -70,7 +70,16 @@ public class ProblemServiceImpl implements ProblemService {
 
     @Override
     @Transactional(readOnly = true)
-    public ProblemResponse getById(UUID contestId, UUID problemId) {
+    public ProblemResponse getById(UUID contestId, UUID problemId, UUID userId) {
+        Contest contest = contestRepository.findByIdAndDeletedAtIsNull(contestId)
+                .orElseThrow(() -> new ContestNotFoundException(contestId));
+
+        if (userId != null && !contest.getHostId().equals(userId)) {
+            if (contest.getStatus() != ContestStatus.ACTIVE && contest.getStatus() != ContestStatus.COMPLETED) {
+                throw new UnauthorizedAccessException("Problems are only visible during an active contest");
+            }
+        }
+
         Optional<ProblemResponse> cached = cacheService.get(
                 String.format(PROBLEM_CACHE_KEY, problemId), ProblemResponse.class);
         if (cached.isPresent()) {
@@ -86,11 +95,22 @@ public class ProblemServiceImpl implements ProblemService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ProblemResponse> listByContest(UUID contestId) {
-        return problemRepository.findByContestIdAndDeletedAtIsNullOrderBySequenceNo(contestId)
-                .stream()
-                .map(problemMapper::toResponse)
-                .toList();
+    public List<ProblemResponse> listByContest(UUID contestId, UUID userId) {
+        Contest contest = contestRepository.findByIdAndDeletedAtIsNull(contestId)
+                .orElseThrow(() -> new ContestNotFoundException(contestId));
+
+        if (userId == null || contest.getHostId().equals(userId)) {
+            return problemRepository.findByContestIdAndDeletedAtIsNullOrderBySequenceNo(contestId)
+                    .stream().map(problemMapper::toResponse).toList();
+        }
+
+        if (contest.getStatus() != ContestStatus.ACTIVE && contest.getStatus() != ContestStatus.COMPLETED) {
+            return List.of();
+        }
+
+        return problemRepository.findByContestIdAndStatusAndDeletedAtIsNullOrderBySequenceNo(
+                        contestId, ProblemStatus.PUBLISHED)
+                .stream().map(problemMapper::toResponse).toList();
     }
 
     @Override

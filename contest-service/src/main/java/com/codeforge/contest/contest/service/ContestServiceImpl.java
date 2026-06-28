@@ -94,17 +94,39 @@ public class ContestServiceImpl implements ContestService {
     @Override
     @Transactional(readOnly = true)
     public Page<ContestResponse> list(Pageable pageable) {
-        return contestRepository.findByStatusAndVisibilityAndDeletedAtIsNull(
-                        ContestStatus.SCHEDULED, Visibility.PUBLIC, pageable)
+        return contestRepository.findByVisibilityAndDeletedAtIsNull(
+                        Visibility.PUBLIC, pageable)
                 .map(this::toResponse);
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<ContestResponse> explore(Pageable pageable) {
-        return contestRepository.findByStatusAndVisibilityAndDeletedAtIsNull(
-                        ContestStatus.SCHEDULED, Visibility.PUBLIC, pageable)
+        return contestRepository.findByVisibilityAndDeletedAtIsNull(
+                        Visibility.PUBLIC, pageable)
                 .map(this::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ContestResponse> myContests(UUID hostId, Pageable pageable) {
+        return contestRepository.findByHostIdAndDeletedAtIsNull(hostId, pageable)
+                .map(this::toResponse);
+    }
+
+    @Override
+    public ContestResponse updateTimes(UUID contestId, UUID userId, Instant startTime, Instant endTime) {
+        Contest contest = findContestById(contestId);
+        verifyHost(contest, userId);
+        if (contest.getStatus() != ContestStatus.DRAFT && contest.getStatus() != ContestStatus.SCHEDULED) {
+            throw new InvalidContestStateException("Can only update times for DRAFT or SCHEDULED contests");
+        }
+        validateContestTimes(startTime, endTime);
+        contest.setStartTime(startTime);
+        contest.setEndTime(endTime);
+        contest = contestRepository.save(contest);
+        cacheService.evict(String.format(CONTEST_CACHE_KEY, contestId));
+        return toResponse(contest);
     }
 
     @Override
@@ -150,11 +172,11 @@ public class ContestServiceImpl implements ContestService {
     }
 
     @Override
-    public void register(UUID contestId, UUID userId) {
+    public void register(UUID contestId, UUID userId, String userName) {
         Contest contest = findContestById(contestId);
 
-        if (contest.getStatus() != ContestStatus.SCHEDULED) {
-            throw new InvalidContestStateException("Registration only open for SCHEDULED contests");
+        if (contest.getStatus() != ContestStatus.SCHEDULED && contest.getStatus() != ContestStatus.ACTIVE) {
+            throw new InvalidContestStateException("Registration only open for SCHEDULED or ACTIVE contests");
         }
 
         if (participantRepository.existsByContestIdAndUserId(contestId, userId)) {
@@ -171,18 +193,19 @@ public class ContestServiceImpl implements ContestService {
         ContestParticipant participant = new ContestParticipant();
         participant.setContest(contest);
         participant.setUserId(userId);
+        participant.setFullName(userName != null ? userName : "Unknown");
         participantRepository.save(participant);
 
         evictContestCache(contestId);
-        log.info("User {} registered for contest {}", userId, contestId);
+        log.info("User {} ({}) registered for contest {}", userId, userName, contestId);
     }
 
     @Override
-    public JoinContestResponse join(JoinContestRequest request, UUID userId) {
+    public JoinContestResponse join(JoinContestRequest request, UUID userId, String userName) {
         Contest contest = contestRepository.findByInviteCode(request.inviteCode().toUpperCase())
                 .orElseThrow(() -> new InvalidInviteCodeException(request.inviteCode()));
 
-        register(contest.getId(), userId);
+        register(contest.getId(), userId, userName);
 
         return new JoinContestResponse(contest.getId(), contest.getTitle(), "Successfully joined contest");
     }

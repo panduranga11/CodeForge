@@ -62,6 +62,27 @@ public class ContestController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
+    @GetMapping("/my")
+    public ResponseEntity<ApiResponse<Page<ContestResponse>>> myContests(
+            @RequestHeader("X-User-Id") UUID userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        Page<ContestResponse> response = contestService.myContests(userId,
+                PageRequest.of(page, size, Sort.by("startTime").descending()));
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PatchMapping("/{id}/times")
+    public ResponseEntity<ApiResponse<ContestResponse>> updateTimes(
+            @PathVariable UUID id,
+            @RequestHeader("X-User-Id") UUID userId,
+            @RequestBody java.util.Map<String, String> body) {
+        java.time.Instant startTime = java.time.Instant.parse(body.get("startTime"));
+        java.time.Instant endTime = java.time.Instant.parse(body.get("endTime"));
+        ContestResponse response = contestService.updateTimes(id, userId, startTime, endTime);
+        return ResponseEntity.ok(ApiResponse.success("Contest times updated", response));
+    }
+
     @GetMapping("/join/{inviteCode}")
     public ResponseEntity<ApiResponse<ContestResponse>> getByInviteCode(
             @PathVariable String inviteCode) {
@@ -88,16 +109,18 @@ public class ContestController {
     @PostMapping("/{id}/register")
     public ResponseEntity<ApiResponse<Void>> register(
             @PathVariable UUID id,
-            @RequestHeader("X-User-Id") UUID userId) {
-        contestService.register(id, userId);
+            @RequestHeader("X-User-Id") UUID userId,
+            @RequestHeader(value = "X-User-Name", required = false) String userName) {
+        contestService.register(id, userId, userName);
         return ResponseEntity.ok(ApiResponse.success("Registered for contest", null));
     }
 
     @PostMapping("/join")
     public ResponseEntity<ApiResponse<JoinContestResponse>> join(
             @RequestHeader("X-User-Id") UUID userId,
+            @RequestHeader(value = "X-User-Name", required = false) String userName,
             @Valid @RequestBody JoinContestRequest request) {
-        JoinContestResponse response = contestService.join(request, userId);
+        JoinContestResponse response = contestService.join(request, userId, userName);
         return ResponseEntity.ok(ApiResponse.success("Joined contest", response));
     }
 

@@ -35,8 +35,8 @@ export function CreateContestPage() {
       contestApi.hostContest({
         title: data.title,
         description: data.description,
-        startTime: data.startTime,
-        endTime: data.endTime,
+        startTime: new Date(data.startTime).toISOString(),
+        endTime: new Date(data.endTime).toISOString(),
         visibility: data.visibility,
         regType: data.regType,
         scoringMode: data.scoringMode,

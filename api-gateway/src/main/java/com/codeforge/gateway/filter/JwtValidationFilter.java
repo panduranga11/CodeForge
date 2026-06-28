@@ -64,6 +64,7 @@ public class JwtValidationFilter implements GlobalFilter, Ordered {
                                 .header("X-User-Id", claims.getSubject())
                                 .header("X-User-Email", claims.get("email", String.class))
                                 .header("X-User-Role", claims.get("role", String.class))
+                                .header("X-User-Name", claims.get("name", String.class) != null ? claims.get("name", String.class) : "Unknown")
                                 .build();
 
                         return chain.filter(exchange.mutate().request(mutatedRequest).build());

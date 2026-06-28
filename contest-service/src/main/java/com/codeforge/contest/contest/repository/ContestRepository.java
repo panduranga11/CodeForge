@@ -25,6 +25,8 @@ public interface ContestRepository extends JpaRepository<Contest, UUID> {
 
     Page<Contest> findByDeletedAtIsNull(Pageable pageable);
 
+    Page<Contest> findByVisibilityAndDeletedAtIsNull(Visibility visibility, Pageable pageable);
+
     Page<Contest> findByStatusAndDeletedAtIsNull(ContestStatus status, Pageable pageable);
 
     Page<Contest> findByHostIdAndDeletedAtIsNull(UUID hostId, Pageable pageable);

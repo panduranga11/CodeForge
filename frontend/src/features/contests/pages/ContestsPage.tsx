@@ -67,13 +67,13 @@ export function ContestsPage() {
 
   const { data: myData, isLoading: myLoading } = useQuery({
     queryKey: qk.contests('my', page),
-    queryFn: () => contestApi.getAll(page, 50),
+    queryFn: () => contestApi.myContests(page, 50),
     enabled: activeTab === 'my',
   });
 
   const rawContests = activeTab === 'all'
     ? (allData?.data?.content ?? [])
-    : (myData?.data?.content ?? []).filter((c) => c.hostId === user?.id);
+    : (myData?.data?.content ?? []);
 
   const totalPages = activeTab === 'all' ? (allData?.data?.totalPages ?? 0) : 1;
   const isLoading = activeTab === 'all' ? allLoading : myLoading;

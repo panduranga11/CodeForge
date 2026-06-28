@@ -30,6 +30,9 @@ public class ContestParticipant {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
+    @Column(name = "full_name", length = 100)
+    private String fullName;
+
     @Column(name = "registered_at", nullable = false)
     private Instant registeredAt;
 

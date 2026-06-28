@@ -1,6 +1,8 @@
 package com.codeforge.contest.leaderboard.service;
 
 import com.codeforge.contest.contest.entity.Contest;
+import com.codeforge.contest.contest.entity.ContestParticipant;
+import com.codeforge.contest.contest.repository.ContestParticipantRepository;
 import com.codeforge.contest.contest.repository.ContestRepository;
 import com.codeforge.contest.leaderboard.dto.LeaderboardResponse;
 import com.codeforge.contest.leaderboard.entity.Leaderboard;
@@ -17,9 +19,9 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.*;
-import java.util.stream.Collectors;
+
 
 @Service
 @RequiredArgsConstructor
@@ -28,11 +30,18 @@ public class LeaderboardServiceImpl implements LeaderboardService {
 
     private final LeaderboardRepository leaderboardRepository;
     private final ContestRepository contestRepository;
+    private final ContestParticipantRepository participantRepository;
     private final RedisTemplate<String, String> redisTemplate;
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final String LEADERBOARD_KEY = "leaderboard:contest:%s";
     private static final String SOLVED_KEY = "solved:contest:%s:user:%s";
+
+    private String resolveUserName(UUID contestId, UUID userId) {
+        return participantRepository.findByContestIdAndUserId(contestId, userId)
+                .map(ContestParticipant::getFullName)
+                .orElse(userId.toString().substring(0, 8));
+    }
 
     @Override
     @Transactional(readOnly = true)
@@ -51,8 +60,8 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         // Fallback to DB
         return leaderboardRepository.findByContestIdOrderByRankAsc(contestId, pageable)
                 .map(lb -> new LeaderboardResponse(
-                        lb.getRank(), lb.getUserId(), lb.getScore(),
-                        lb.getPenaltyTime(), lb.getProblemsSolved(), lb.getLastAcTime()
+                        lb.getRank(), lb.getUserId(), resolveUserName(contestId, lb.getUserId()),
+                        lb.getScore(), lb.getPenaltyTime(), lb.getProblemsSolved(), lb.getLastAcTime()
                 ));
     }
 
@@ -101,7 +110,7 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         entry.addSolvedProblem(event.getProblemId());
         entry.setScore(entry.getScore() + event.getScore());
         entry.setProblemsSolved(entry.getProblemsSolved() + 1);
-        entry.setLastAcTime(LocalDateTime.now());
+        entry.setLastAcTime(Instant.now());
         leaderboardRepository.save(entry);
 
         recalculateRanks(event.getContestId());
@@ -147,7 +156,7 @@ public class LeaderboardServiceImpl implements LeaderboardService {
             Long solved = redisTemplate.opsForSet().size(solvedKey);
 
             results.add(new LeaderboardResponse(
-                    rank++, userId, score, 0,
+                    rank++, userId, resolveUserName(contestId, userId), score, 0,
                     solved != null ? solved.intValue() : 0, null
             ));
         }
@@ -173,7 +182,7 @@ public class LeaderboardServiceImpl implements LeaderboardService {
             String solvedKey = String.format(SOLVED_KEY, contestId, userId);
             Long solved = redisTemplate.opsForSet().size(solvedKey);
             results.add(new LeaderboardResponse(
-                    rank++, userId, score, 0,
+                    rank++, userId, resolveUserName(contestId, userId), score, 0,
                     solved != null ? solved.intValue() : 0, null
             ));
         }

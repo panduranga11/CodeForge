@@ -6,6 +6,7 @@ import java.util.UUID;
 public record LeaderboardResponse(
         int rank,
         UUID userId,
+        String fullName,
         int score,
         int penaltyTime,
         int problemsSolved,

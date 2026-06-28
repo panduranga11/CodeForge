@@ -30,16 +30,18 @@ public class ProblemController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<ProblemResponse>>> listByContest(
-            @PathVariable UUID contestId) {
-        List<ProblemResponse> response = problemService.listByContest(contestId);
+            @PathVariable UUID contestId,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId) {
+        List<ProblemResponse> response = problemService.listByContest(contestId, userId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/{problemId}")
     public ResponseEntity<ApiResponse<ProblemResponse>> getById(
             @PathVariable UUID contestId,
-            @PathVariable UUID problemId) {
-        ProblemResponse response = problemService.getById(contestId, problemId);
+            @PathVariable UUID problemId,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId) {
+        ProblemResponse response = problemService.getById(contestId, problemId, userId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
