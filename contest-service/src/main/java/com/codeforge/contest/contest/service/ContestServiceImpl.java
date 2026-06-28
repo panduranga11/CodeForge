@@ -223,8 +223,8 @@ public class ContestServiceImpl implements ContestService {
     }
 
     private void validateContestTimes(LocalDateTime startTime, LocalDateTime endTime) {
-        if (startTime.isBefore(LocalDateTime.now().plusMinutes(10))) {
-            throw new InvalidContestStateException("Start time must be at least 10 minutes in the future");
+        if (startTime.isBefore(LocalDateTime.now().plusMinutes(2))) {
+            throw new InvalidContestStateException("Start time must be at least 2 minutes in the future");
         }
         if (endTime.isBefore(startTime.plusMinutes(15))) {
             throw new InvalidContestStateException("Contest duration must be at least 15 minutes");
