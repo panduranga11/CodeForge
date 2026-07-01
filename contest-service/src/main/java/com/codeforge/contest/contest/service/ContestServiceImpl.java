@@ -10,6 +10,7 @@ import com.codeforge.contest.shared.config.CacheService;
 import com.codeforge.contest.shared.exception.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -30,7 +31,9 @@ public class ContestServiceImpl implements ContestService {
 
     private static final String INVITE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final int INVITE_CODE_LENGTH = 8;
-    private static final String INVITE_LINK_BASE = "https://codeforge.io/join/";
+
+    @Value("${app.invite-link-base:http://localhost:5173/join/}")
+    private String inviteLinkBase;
 
     private static final String CONTEST_CACHE_KEY = "contest:%s";
     private static final Duration CONTEST_CACHE_TTL = Duration.ofSeconds(10);
@@ -58,7 +61,7 @@ public class ContestServiceImpl implements ContestService {
         contest.setCreatedBy(hostId);
         contest.setStatus(ContestStatus.DRAFT);
         contest.setInviteCode(generateInviteCode());
-        contest.setInviteLink(INVITE_LINK_BASE + contest.getInviteCode());
+        // inviteLink is constructed dynamically from inviteCode — not persisted
 
         contest = contestRepository.save(contest);
         log.info("Contest created id={} by host={}", contest.getId(), hostId);
@@ -295,7 +298,7 @@ public class ContestServiceImpl implements ContestService {
                 contest.getScoringMode().name(),
                 contest.getMaxParticipants(),
                 contest.getInviteCode(),
-                contest.getInviteLink(),
+                contest.getInviteCode() != null ? inviteLinkBase + contest.getInviteCode() : null,
                 contest.getHostId(),
                 participantCount,
                 problemCount,

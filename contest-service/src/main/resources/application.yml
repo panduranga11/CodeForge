@@ -35,6 +35,9 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
 
+app:
+  invite-link-base: ${INVITE_LINK_BASE:http://localhost:3000/join/}
+
 server:
   port: ${SERVER_PORT:8082}
 

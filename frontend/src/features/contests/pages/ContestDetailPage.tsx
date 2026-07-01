@@ -1,7 +1,7 @@
 import { useState, Fragment } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trophy, Clock, Users, Code, ArrowRight, CheckCircle, Play, Calendar, Plus, Rocket, XCircle, Trash2, Eye, Pencil } from 'lucide-react';
+import { Trophy, Clock, Users, Code, ArrowRight, CheckCircle, Play, Calendar, Plus, Rocket, XCircle, Trash2, Eye, Pencil, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { contestApi } from '@/features/contests/services/contestApi';
 import { useAuthStore } from '@/features/auth/hooks/useAuthStore';
@@ -99,6 +99,12 @@ export function ContestDetailPage() {
   const participating = isParticipant?.data ?? false;
   const isHost = contest?.hostId === user?.id;
 
+  const toDatetimeLocal = (iso: string) => {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -161,7 +167,7 @@ export function ContestDetailPage() {
               </Button>
             )}
             {(contest.status === 'DRAFT' || contest.status === 'SCHEDULED') && (
-              <Button variant="surface" leftIcon={<Pencil className="h-4 w-4" />} onClick={() => { setNewStartTime(''); setNewEndTime(''); setTimesDialogOpen(true); }}>
+              <Button variant="surface" leftIcon={<Pencil className="h-4 w-4" />} onClick={() => { setNewStartTime(toDatetimeLocal(contest.startTime)); setNewEndTime(toDatetimeLocal(contest.endTime)); setTimesDialogOpen(true); }}>
                 Update Times
               </Button>
             )}
@@ -186,8 +192,16 @@ export function ContestDetailPage() {
             <CheckCircle className="w-4 h-4 mr-1.5 inline" /> Registered
           </Badge>
         )}
-        {contest.inviteCode && (isHost || participating) && (
-          <CopyButton value={contest.inviteCode}>{contest.inviteCode}</CopyButton>
+        {contest.inviteCode && contest.status !== 'DRAFT' && (isHost || participating) && (
+          <CopyButton value={contest.inviteCode} title="Copy invite code">
+            <span className="font-mono tracking-widest">{contest.inviteCode}</span>
+          </CopyButton>
+        )}
+        {contest.inviteLink && contest.status !== 'DRAFT' && (isHost || participating) && (
+          <CopyButton value={contest.inviteLink} title="Copy invite link">
+            <Link2 className="w-3.5 h-3.5" />
+            Invite Link
+          </CopyButton>
         )}
         <Button variant="surface" leftIcon={<Trophy className="h-4 w-4" />} onClick={() => navigate(`/contests/${id}/leaderboard`)}>
           Leaderboard
@@ -284,11 +298,16 @@ export function ContestDetailPage() {
         <DialogBody>
           <div className="space-y-4">
             <Field label="Start Time" htmlFor="newStartTime" required>
-              <Input id="newStartTime" type="datetime-local" value={newStartTime} onChange={(e) => setNewStartTime(e.target.value)} />
+              <Input id="newStartTime" type="datetime-local" value={newStartTime}
+                min={toDatetimeLocal(new Date(Date.now() + 3 * 60000).toISOString())}
+                onChange={(e) => setNewStartTime(e.target.value)} />
             </Field>
             <Field label="End Time" htmlFor="newEndTime" required>
-              <Input id="newEndTime" type="datetime-local" value={newEndTime} onChange={(e) => setNewEndTime(e.target.value)} />
+              <Input id="newEndTime" type="datetime-local" value={newEndTime}
+                min={newStartTime}
+                onChange={(e) => setNewEndTime(e.target.value)} />
             </Field>
+            <p className="text-xs text-forge-muted">Start must be at least 2 min in the future · End must be at least 15 min after start</p>
           </div>
         </DialogBody>
         <DialogFooter>

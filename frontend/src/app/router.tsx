@@ -15,6 +15,7 @@ import { AddProblemPage } from '@/features/contests/pages/AddProblemPage';
 import { AddTestCasePage } from '@/features/contests/pages/AddTestCasePage';
 import { LeaderboardPage } from '@/features/contests/pages/LeaderboardPage';
 import { ProfilePage } from '@/features/profile/pages/ProfilePage';
+import { JoinContestPage } from '@/features/contests/pages/JoinContestPage';
 import { KitchenSinkPage } from '@/features/kitchensink/pages/KitchenSinkPage';
 import { Navigate } from 'react-router-dom';
 
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
     ],
   },
   { path: '/oauth/callback', element: <OAuthCallbackPage /> },
+  { path: '/join/:inviteCode', element: <JoinContestPage /> },
   {
     element: <ProtectedRoute />,
     children: [
