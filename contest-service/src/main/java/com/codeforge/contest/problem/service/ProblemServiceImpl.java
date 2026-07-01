@@ -2,6 +2,7 @@ package com.codeforge.contest.problem.service;
 
 import com.codeforge.contest.contest.entity.Contest;
 import com.codeforge.contest.contest.entity.ContestStatus;
+import com.codeforge.contest.contest.repository.ContestParticipantRepository;
 import com.codeforge.contest.contest.repository.ContestRepository;
 import com.codeforge.contest.problem.dto.*;
 import com.codeforge.contest.problem.entity.*;
@@ -33,6 +34,7 @@ public class ProblemServiceImpl implements ProblemService {
     private final ProblemRepository problemRepository;
     private final TestCaseRepository testCaseRepository;
     private final ContestRepository contestRepository;
+    private final ContestParticipantRepository participantRepository;
     private final ProblemMapper problemMapper;
     private final CacheService cacheService;
 
@@ -74,11 +76,7 @@ public class ProblemServiceImpl implements ProblemService {
         Contest contest = contestRepository.findByIdAndDeletedAtIsNull(contestId)
                 .orElseThrow(() -> new ContestNotFoundException(contestId));
 
-        if (userId != null && !contest.getHostId().equals(userId)) {
-            if (contest.getStatus() != ContestStatus.ACTIVE && contest.getStatus() != ContestStatus.COMPLETED) {
-                throw new UnauthorizedAccessException("Problems are only visible during an active contest");
-            }
-        }
+        verifyProblemAccess(contest, userId);
 
         Optional<ProblemResponse> cached = cacheService.get(
                 String.format(PROBLEM_CACHE_KEY, problemId), ProblemResponse.class);
@@ -99,18 +97,33 @@ public class ProblemServiceImpl implements ProblemService {
         Contest contest = contestRepository.findByIdAndDeletedAtIsNull(contestId)
                 .orElseThrow(() -> new ContestNotFoundException(contestId));
 
-        if (userId == null || contest.getHostId().equals(userId)) {
+        // Host sees everything regardless of status
+        if (userId != null && contest.getHostId().equals(userId)) {
             return problemRepository.findByContestIdAndDeletedAtIsNullOrderBySequenceNo(contestId)
                     .stream().map(problemMapper::toResponse).toList();
         }
 
-        if (contest.getStatus() != ContestStatus.ACTIVE && contest.getStatus() != ContestStatus.COMPLETED) {
-            return List.of();
-        }
+        verifyProblemAccess(contest, userId);
 
         return problemRepository.findByContestIdAndStatusAndDeletedAtIsNullOrderBySequenceNo(
                         contestId, ProblemStatus.PUBLISHED)
                 .stream().map(problemMapper::toResponse).toList();
+    }
+
+    private void verifyProblemAccess(Contest contest, UUID userId) {
+        ContestStatus status = contest.getStatus();
+
+        if (status == ContestStatus.DRAFT || status == ContestStatus.SCHEDULED || status == ContestStatus.CANCELLED) {
+            throw new UnauthorizedAccessException("Problems are not available yet");
+        }
+
+        // COMPLETED — visible to everyone
+        if (status == ContestStatus.COMPLETED) return;
+
+        // ACTIVE — registered participants only
+        if (userId == null || !participantRepository.existsByContestIdAndUserId(contest.getId(), userId)) {
+            throw new UnauthorizedAccessException("You must be registered to access problems during an active contest");
+        }
     }
 
     @Override

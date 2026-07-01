@@ -74,6 +74,7 @@ export interface TestCase {
 export interface LeaderboardEntry {
   rank: number;
   userId: string;
+  fullName?: string;
   score: number;
   penaltyTime: number;
   problemsSolved: number;

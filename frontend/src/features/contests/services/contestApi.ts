@@ -21,6 +21,11 @@ export const contestApi = {
       params: { page, size },
     }).then((r) => r.data),
 
+  participating: (page = 0, size = 50) =>
+    apiClient.get<ApiResponse<PageResponse<Contest>>>('/contest/v1/contests/participating', {
+      params: { page, size },
+    }).then((r) => r.data),
+
   updateTimes: (id: string, startTime: string, endTime: string) =>
     apiClient.patch<ApiResponse<Contest>>(`/contest/v1/contests/${id}/times`, { startTime, endTime }).then((r) => r.data),
 

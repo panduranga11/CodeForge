@@ -26,6 +26,9 @@ spring:
         spring.json.trusted.packages: "*"
         spring.json.value.default.type: com.codeforge.contest.shared.event.SubmissionCompletedEvent
         spring.json.use.type.headers: false
+        reconnect.backoff.ms: 2000
+        reconnect.backoff.max.ms: 30000
+        retry.backoff.ms: 3000
 
   data:
     redis:
@@ -49,5 +52,7 @@ logging:
   level:
     com.codeforge.contest: DEBUG
     org.hibernate.SQL: DEBUG
+    org.apache.kafka.clients.NetworkClient: ERROR
+    org.apache.kafka.clients.Metadata: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

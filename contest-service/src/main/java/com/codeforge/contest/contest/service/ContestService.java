@@ -21,6 +21,8 @@ public interface ContestService {
 
     Page<ContestResponse> myContests(UUID hostId, Pageable pageable);
 
+    Page<ContestResponse> participating(UUID userId, Pageable pageable);
+
     ContestResponse updateTimes(UUID contestId, UUID userId, Instant startTime, Instant endTime);
 
     ContestResponse schedule(UUID contestId, UUID userId);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Trophy, Clock, Users, Code, ArrowRight, CheckCircle, Play, Calendar, Plus, Rocket, XCircle, Trash2, Eye, Pencil } from 'lucide-react';
@@ -134,6 +134,8 @@ export function ContestDetailPage() {
           </div>
         }
       />
+
+      <ContestLifecycle status={contest.status} />
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
@@ -308,6 +310,58 @@ export function ContestDetailPage() {
           <Button variant="danger" loading={deleteProblemMutation.isPending} onClick={() => deleteTarget && deleteProblemMutation.mutate(deleteTarget)}>Delete</Button>
         </DialogFooter>
       </Dialog>
+    </div>
+  );
+}
+
+const LIFECYCLE_STEPS = [
+  { key: 'DRAFT', label: 'Draft', Icon: Pencil },
+  { key: 'SCHEDULED', label: 'Scheduled', Icon: Calendar },
+  { key: 'ACTIVE', label: 'Live', Icon: Play },
+  { key: 'COMPLETED', label: 'Completed', Icon: CheckCircle },
+] as const;
+
+function ContestLifecycle({ status }: { status: string }) {
+  if (status === 'CANCELLED') {
+    return (
+      <div className="flex items-center gap-2 mb-8 px-4 py-2.5 rounded-lg bg-red-500/10 border border-red-500/20 w-fit">
+        <XCircle className="w-4 h-4 text-red-400" />
+        <span className="text-sm font-medium text-red-400">Contest Cancelled</span>
+      </div>
+    );
+  }
+
+  const currentIdx = LIFECYCLE_STEPS.findIndex((s) => s.key === status);
+
+  return (
+    <div className="flex items-center mb-8">
+      {LIFECYCLE_STEPS.map(({ key, label, Icon }, idx) => {
+        const isPast = idx < currentIdx;
+        const isCurrent = idx === currentIdx;
+        return (
+          <Fragment key={key}>
+            <div className="flex flex-col items-center gap-1.5">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-all ${
+                isCurrent ? 'border-ember-500 bg-ember-500/20 text-ember-400' :
+                isPast ? 'border-success bg-success/20 text-success' :
+                'border-forge-border bg-forge-surface text-forge-muted'
+              }`}>
+                <Icon className="w-3.5 h-3.5" />
+              </div>
+              <span className={`text-[11px] font-medium ${
+                isCurrent ? 'text-ember-400' : isPast ? 'text-success' : 'text-forge-muted'
+              }`}>
+                {label}
+              </span>
+            </div>
+            {idx < LIFECYCLE_STEPS.length - 1 && (
+              <div className={`h-0.5 flex-1 mx-3 mb-5 rounded-full transition-all ${
+                idx < currentIdx ? 'bg-success/50' : 'bg-forge-border'
+              }`} />
+            )}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }

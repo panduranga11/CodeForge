@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -102,7 +103,8 @@ public class ContestServiceImpl implements ContestService {
     @Override
     @Transactional(readOnly = true)
     public Page<ContestResponse> explore(Pageable pageable) {
-        return contestRepository.findByVisibilityAndDeletedAtIsNull(
+        return contestRepository.findByStatusInAndVisibilityAndDeletedAtIsNull(
+                        List.of(ContestStatus.ACTIVE, ContestStatus.SCHEDULED, ContestStatus.COMPLETED),
                         Visibility.PUBLIC, pageable)
                 .map(this::toResponse);
     }
@@ -111,6 +113,13 @@ public class ContestServiceImpl implements ContestService {
     @Transactional(readOnly = true)
     public Page<ContestResponse> myContests(UUID hostId, Pageable pageable) {
         return contestRepository.findByHostIdAndDeletedAtIsNull(hostId, pageable)
+                .map(this::toResponse);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<ContestResponse> participating(UUID userId, Pageable pageable) {
+        return participantRepository.findContestsByUserId(userId, pageable)
                 .map(this::toResponse);
     }
 

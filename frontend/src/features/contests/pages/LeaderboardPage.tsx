@@ -9,6 +9,7 @@ import { cn } from '@/shared/lib/cn';
 import {
   PageHeader, Skeleton, EmptyState, Pagination, Button,
 } from '@/shared/components/ui';
+import type { LeaderboardEntry } from '@/shared/types';
 
 const RANK_STYLE: Record<number, string> = {
   1: 'text-[#fbbf24] bg-[#fbbf24]/10',
@@ -50,6 +51,19 @@ export function LeaderboardPage() {
           </Button>
         }
       />
+
+      {/* Top-3 Podium */}
+      {!isLoading && entries.length >= 1 && page === 0 && (
+        <div className="flex items-end justify-center gap-3 mb-8">
+          {entries.length >= 2 && (
+            <PodiumCard entry={entries[1]} rank={2} height="h-20" />
+          )}
+          <PodiumCard entry={entries[0]} rank={1} height="h-28" />
+          {entries.length >= 3 && (
+            <PodiumCard entry={entries[2]} rank={3} height="h-14" />
+          )}
+        </div>
+      )}
 
       <div className="bg-forge-dark border border-forge-border rounded-xl overflow-hidden">
         {/* Table header */}
@@ -101,6 +115,31 @@ export function LeaderboardPage() {
       </div>
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} className="mt-6" />
+    </div>
+  );
+}
+
+const PODIUM_CONFIG: Record<number, { border: string; bg: string; text: string; medal: string }> = {
+  1: { border: 'border-amber-400/40', bg: 'bg-amber-400/10', text: 'text-amber-400', medal: '🏆' },
+  2: { border: 'border-slate-400/30', bg: 'bg-slate-400/8', text: 'text-slate-300', medal: '🥈' },
+  3: { border: 'border-amber-700/30', bg: 'bg-amber-700/8', text: 'text-amber-600', medal: '🥉' },
+};
+
+function PodiumCard({ entry, rank, height }: { entry: LeaderboardEntry; rank: number; height: string }) {
+  const c = PODIUM_CONFIG[rank];
+  return (
+    <div className="flex flex-col items-center gap-1.5 flex-1 max-w-[160px]">
+      <span className="text-2xl">{c.medal}</span>
+      <p className={cn('text-sm font-bold truncate w-full text-center', c.text)}>
+        {entry.fullName || entry.userId.slice(0, 8)}
+      </p>
+      <p className="text-xs text-forge-muted">{entry.score} pts</p>
+      <div className={cn(
+        'w-full rounded-t-xl border-t border-x flex items-center justify-center',
+        height, c.border, c.bg,
+      )}>
+        <span className={cn('text-2xl font-black', c.text)}>{rank}</span>
+      </div>
     </div>
   );
 }

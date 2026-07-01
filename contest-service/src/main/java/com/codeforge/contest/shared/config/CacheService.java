@@ -1,6 +1,5 @@
 package com.codeforge.contest.shared.config;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -29,41 +28,49 @@ public class CacheService {
         try {
             String json = objectMapper.writeValueAsString(value);
             redisTemplate.opsForValue().set(key, json, ttl);
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to cache key {}: {}", key, e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cache put failed for key {}: {}", key, e.getMessage());
         }
     }
 
     public <T> Optional<T> get(String key, Class<T> type) {
-        String json = redisTemplate.opsForValue().get(key);
-        if (json == null) return Optional.empty();
         try {
+            String json = redisTemplate.opsForValue().get(key);
+            if (json == null) return Optional.empty();
             return Optional.of(objectMapper.readValue(json, type));
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to deserialize cache key {}: {}", key, e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cache get failed for key {}: {}", key, e.getMessage());
             return Optional.empty();
         }
     }
 
     public <T> Optional<T> get(String key, TypeReference<T> typeRef) {
-        String json = redisTemplate.opsForValue().get(key);
-        if (json == null) return Optional.empty();
         try {
+            String json = redisTemplate.opsForValue().get(key);
+            if (json == null) return Optional.empty();
             return Optional.of(objectMapper.readValue(json, typeRef));
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to deserialize cache key {}: {}", key, e.getMessage());
+        } catch (Exception e) {
+            log.warn("Cache get failed for key {}: {}", key, e.getMessage());
             return Optional.empty();
         }
     }
 
     public void evict(String key) {
-        redisTemplate.delete(key);
+        try {
+            redisTemplate.delete(key);
+        } catch (Exception e) {
+            log.warn("Cache evict failed for key {}: {}", key, e.getMessage());
+        }
     }
 
     public void evictPattern(String pattern) {
-        Set<String> keys = redisTemplate.keys(pattern);
-        if (keys != null && !keys.isEmpty()) {
-            redisTemplate.delete(keys);
+        try {
+            Set<String> keys = redisTemplate.keys(pattern);
+            if (keys != null && !keys.isEmpty()) {
+                redisTemplate.delete(keys);
+            }
+        } catch (Exception e) {
+            log.warn("Cache evictPattern failed for pattern {}: {}", pattern, e.getMessage());
         }
     }
 }

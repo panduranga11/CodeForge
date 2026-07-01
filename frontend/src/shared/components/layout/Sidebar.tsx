@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/hooks/useAuthStore';
 import { authApi } from '@/features/auth/services/authApi';
 import {
-  LayoutDashboard, Trophy, FileCode, User, LogOut, Plus, ChevronLeft, ChevronRight,
+  LayoutDashboard, Trophy, User, LogOut, Plus, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -13,7 +13,6 @@ import { cn } from '@/shared/lib/cn';
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/contests', label: 'Contests', icon: Trophy },
-  { to: '/submissions', label: 'Submissions', icon: FileCode },
   { to: '/profile', label: 'Profile', icon: User },
 ];
 

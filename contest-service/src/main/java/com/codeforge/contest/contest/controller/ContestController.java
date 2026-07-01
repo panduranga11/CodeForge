@@ -72,6 +72,16 @@ public class ContestController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
+    @GetMapping("/participating")
+    public ResponseEntity<ApiResponse<Page<ContestResponse>>> participating(
+            @RequestHeader("X-User-Id") UUID userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        Page<ContestResponse> response = contestService.participating(userId,
+                PageRequest.of(page, size));
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
     @PatchMapping("/{id}/times")
     public ResponseEntity<ApiResponse<ContestResponse>> updateTimes(
             @PathVariable UUID id,

@@ -1,14 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Trophy, Code, CheckCircle, TrendingUp, ArrowRight, Plus, Compass } from 'lucide-react';
+import { Trophy, Code, CheckCircle, TrendingUp, ArrowRight, Plus, Compass, Users, Zap, Clock, CheckSquare } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/hooks/useAuthStore';
 import { contestApi } from '@/features/contests/services/contestApi';
 import { apiClient } from '@/shared/api/axiosClient';
 import { qk } from '@/shared/constants/queryKeys';
-import { CONTEST_STATUS_LABEL } from '@/shared/constants/enums';
-import { formatDateTime } from '@/shared/lib/format';
 import {
-  PageHeader, StatCard, Card, CardContent, Badge, Button,
+  PageHeader, StatCard, Card, CardContent, Button,
   Skeleton, EmptyState,
 } from '@/shared/components/ui';
 import type { ApiResponse, Contest } from '@/shared/types';
@@ -19,12 +17,29 @@ interface UserDashboard {
   problemsSolved: number;
 }
 
-const STATUS_BADGE_VARIANT: Record<string, 'active' | 'scheduled' | 'completed' | 'draft' | 'cancelled'> = {
-  ACTIVE: 'active',
-  SCHEDULED: 'scheduled',
-  COMPLETED: 'completed',
-  DRAFT: 'draft',
-  CANCELLED: 'cancelled',
+const STATUS_ACCENT: Record<string, string> = {
+  ACTIVE: 'border-l-4 border-l-success',
+  SCHEDULED: 'border-l-4 border-l-blue-400',
+  COMPLETED: 'border-l-4 border-l-forge-muted',
+  CANCELLED: 'border-l-4 border-l-red-500',
+};
+
+const STATUS_DOT: Record<string, string> = {
+  ACTIVE: 'bg-success',
+  SCHEDULED: 'bg-blue-400',
+  COMPLETED: 'bg-forge-muted',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  ACTIVE: 'Live now',
+  SCHEDULED: 'Upcoming',
+  COMPLETED: 'Ended',
+};
+
+const STATUS_ICON: Record<string, JSX.Element> = {
+  ACTIVE: <Zap className="w-3 h-3 text-success" />,
+  SCHEDULED: <Clock className="w-3 h-3 text-blue-400" />,
+  COMPLETED: <CheckSquare className="w-3 h-3 text-forge-muted" />,
 };
 
 export function DashboardPage() {
@@ -53,7 +68,7 @@ export function DashboardPage() {
     <div>
       <PageHeader
         title={`Welcome back, ${user?.fullName?.split(' ')[0] ?? 'coder'}`}
-        subtitle="Here's an overview of your coding journey"
+        subtitle="Your contest activity at a glance"
         actions={
           <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => navigate('/contests/create')}>
             Host a Contest
@@ -109,23 +124,24 @@ export function DashboardPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {contests.map((contest: Contest) => (
             <Link key={contest.id} to={`/contests/${contest.id}`}>
-              <Card interactive className="h-full">
-                <CardContent>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Badge variant={STATUS_BADGE_VARIANT[contest.status] ?? 'neutral'}>
-                      {CONTEST_STATUS_LABEL[contest.status]}
-                    </Badge>
-                    {contest.visibility === 'PRIVATE' && (
-                      <Badge variant="neutral">Private</Badge>
-                    )}
+              <Card interactive className={`h-full ${STATUS_ACCENT[contest.status] ?? ''}`}>
+                <CardContent className="flex flex-col h-full">
+                  <div className="flex items-center gap-1.5 mb-3">
+                    {STATUS_ICON[contest.status]}
+                    <span className="text-xs font-medium text-forge-muted">
+                      {STATUS_LABEL[contest.status] ?? contest.status}
+                    </span>
+                    <span className={`ml-auto w-1.5 h-1.5 rounded-full ${STATUS_DOT[contest.status] ?? 'bg-forge-border'}`} />
                   </div>
-                  <h3 className="text-lg font-semibold text-forge-white mb-2 truncate">
+                  <h3 className="text-base font-semibold text-forge-white mb-1.5 truncate">
                     {contest.title}
                   </h3>
-                  <p className="text-sm text-forge-muted line-clamp-2 mb-4">{contest.description}</p>
-                  <div className="flex items-center justify-between text-xs text-steel-400">
+                  <p className="text-sm text-forge-muted line-clamp-1 mb-4 flex-1">{contest.description}</p>
+                  <div className="flex items-center gap-1 text-xs text-steel-400">
+                    <Users className="w-3.5 h-3.5" />
+                    <span>{contest.participantCount ?? 0} participants</span>
+                    <span className="mx-1.5 text-forge-border">·</span>
                     <span>{contest.problemCount} problems</span>
-                    <span>{formatDateTime(contest.startTime)}</span>
                   </div>
                 </CardContent>
               </Card>

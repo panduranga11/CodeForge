@@ -3,9 +3,12 @@ package com.codeforge.contest.analytics.service;
 import com.codeforge.contest.analytics.dto.ContestAnalyticsResponse;
 import com.codeforge.contest.analytics.dto.ProblemStatsResponse;
 import com.codeforge.contest.analytics.dto.UserDashboardResponse;
+import com.codeforge.contest.analytics.entity.UserStats;
+import com.codeforge.contest.analytics.repository.UserStatsRepository;
 import com.codeforge.contest.contest.entity.Contest;
 import com.codeforge.contest.contest.repository.ContestParticipantRepository;
 import com.codeforge.contest.contest.repository.ContestRepository;
+import com.codeforge.contest.leaderboard.repository.LeaderboardRepository;
 import com.codeforge.contest.problem.entity.Problem;
 import com.codeforge.contest.problem.repository.ProblemRepository;
 import com.codeforge.contest.shared.config.CacheService;
@@ -18,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +38,8 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     private final ContestRepository contestRepository;
     private final ContestParticipantRepository participantRepository;
     private final ProblemRepository problemRepository;
+    private final LeaderboardRepository leaderboardRepository;
+    private final UserStatsRepository userStatsRepository;
     private final CacheService cacheService;
 
     @Override
@@ -75,8 +81,17 @@ public class AnalyticsServiceImpl implements AnalyticsService {
             return cached.get();
         }
 
-        long contestsParticipated = participantRepository.countByContestId(userId);
-        UserDashboardResponse response = new UserDashboardResponse(contestsParticipated, 0, 0);
+        long contestsParticipated = participantRepository.countByUserId(userId);
+
+        long totalSubmissions = userStatsRepository.findById(userId)
+                .map(UserStats::getTotalSubmissions)
+                .orElse(0L);
+
+        long problemsSolved = leaderboardRepository.sumProblemsSolvedByUserId(userId);
+
+        UserDashboardResponse response = new UserDashboardResponse(
+                contestsParticipated, totalSubmissions, problemsSolved);
+
         cacheService.put(String.format(DASHBOARD_CACHE_KEY, userId), response, DASHBOARD_CACHE_TTL);
         return response;
     }
@@ -84,8 +99,20 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     @Override
     @Transactional
     public void updateProblemStats(SubmissionCompletedEvent event) {
-        log.info("Analytics: processing submission {} for problem {} verdict={}",
-                event.getSubmissionId(), event.getProblemId(), event.getVerdict());
+        log.info("Analytics: processing submission {} for user {} verdict={}",
+                event.getSubmissionId(), event.getUserId(), event.getVerdict());
+
         cacheService.evict(String.format(DASHBOARD_CACHE_KEY, event.getUserId()));
+
+        UserStats stats = userStatsRepository.findById(event.getUserId())
+                .orElseGet(() -> {
+                    UserStats s = new UserStats();
+                    s.setUserId(event.getUserId());
+                    return s;
+                });
+
+        stats.setTotalSubmissions(stats.getTotalSubmissions() + 1);
+        stats.setUpdatedAt(Instant.now());
+        userStatsRepository.save(stats);
     }
 }
