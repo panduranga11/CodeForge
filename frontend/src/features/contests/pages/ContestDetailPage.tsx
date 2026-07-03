@@ -43,7 +43,11 @@ export function ContestDetailPage() {
   const { data: problemsData } = useQuery({
     queryKey: qk.problems(id!),
     queryFn: () => contestApi.getProblems(id!),
-    enabled: !!id,
+    enabled: !!id && (
+      contestData?.data?.hostId === user?.id ||
+      contestData?.data?.status === 'ACTIVE' ||
+      contestData?.data?.status === 'COMPLETED'
+    ),
   });
 
   const { data: isParticipant } = useQuery({
@@ -218,7 +222,25 @@ export function ContestDetailPage() {
         )}
       </div>
 
-      {problems.length === 0 ? (
+      {!isHost && contest.status !== 'ACTIVE' && contest.status !== 'COMPLETED' ? (
+        <div className="flex flex-col items-center justify-center py-14 gap-3 rounded-xl border border-forge-border bg-forge-surface/30">
+          <div className="w-12 h-12 rounded-full bg-forge-surface border border-forge-border flex items-center justify-center">
+            <Clock className="w-5 h-5 text-forge-muted" />
+          </div>
+          <p className="text-sm font-medium text-forge-white">
+            {contest.status === 'COMPLETED' || contest.status === 'CANCELLED'
+              ? 'Problems are not available for this contest'
+              : 'Problems will be revealed when the contest goes live'}
+          </p>
+          <p className="text-xs text-forge-muted">
+            {contest.status === 'SCHEDULED'
+              ? `Contest starts ${formatDateTime(contest.startTime)}`
+              : contest.status === 'DRAFT'
+              ? 'This contest has not been scheduled yet'
+              : null}
+          </p>
+        </div>
+      ) : problems.length === 0 ? (
         <EmptyState
           icon={<Code className="h-12 w-12" />}
           title="No problems available yet"
@@ -281,6 +303,7 @@ export function ContestDetailPage() {
       )}
 
       {/* Cancel Dialog */}
+
       <Dialog open={cancelDialogOpen} onClose={() => setCancelDialogOpen(false)}>
         <DialogHeader><DialogTitle>Cancel Contest</DialogTitle></DialogHeader>
         <DialogBody>

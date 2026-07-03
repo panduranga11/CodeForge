@@ -12,5 +12,5 @@ export type {
 } from './contest';
 export type {
   Language, Verdict,
-  Submission, TestResult, CreateSubmissionRequest,
+  Submission, TestResult, CreateSubmissionRequest, RunResponse,
 } from './execution';

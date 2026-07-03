@@ -28,3 +28,10 @@ export interface CreateSubmissionRequest {
   language: Language;
   sourceCode: string;
 }
+
+export interface RunResponse {
+  compiled: boolean;
+  stdout: string | null;
+  stderr: string | null;
+  executionTimeMs: number;
+}

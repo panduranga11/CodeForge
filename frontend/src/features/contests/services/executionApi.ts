@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/axiosClient';
-import type { ApiResponse, PageResponse, Submission, CreateSubmissionRequest } from '@/shared/types';
+import type { ApiResponse, PageResponse, Submission, CreateSubmissionRequest, RunResponse } from '@/shared/types';
 
 export const executionApi = {
   submit: (data: CreateSubmissionRequest) =>
@@ -12,4 +12,7 @@ export const executionApi = {
     apiClient.get<ApiResponse<PageResponse<Submission>>>('/exec/v1/submissions', {
       params,
     }).then((r) => r.data),
+
+  run: (data: { language: string; sourceCode: string; customInput?: string }) =>
+    apiClient.post<ApiResponse<RunResponse>>('/exec/v1/run', data).then((r) => r.data),
 };
