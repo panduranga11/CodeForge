@@ -19,7 +19,7 @@ public class ContestLifecycleScheduler {
 
     private final ContestRepository contestRepository;
 
-    @Scheduled(fixedRate = 30000)
+    @Scheduled(fixedRate = 10000)
     @Transactional
     public void transitionContests() {
         Instant now = Instant.now();

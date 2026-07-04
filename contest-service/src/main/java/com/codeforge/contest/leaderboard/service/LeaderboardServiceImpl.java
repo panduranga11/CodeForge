@@ -35,7 +35,11 @@ public class LeaderboardServiceImpl implements LeaderboardService {
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final String LEADERBOARD_KEY = "leaderboard:contest:%s";
-    private static final String SOLVED_KEY = "solved:contest:%s:user:%s";
+    private static final String SCORES_KEY     = "scores:contest:%s";
+    private static final String SOLVED_KEY     = "solved:contest:%s:user:%s";
+
+    // 10M seconds > any realistic contest duration, keeps points as the dominant factor
+    private static final long TIME_BUCKET = 10_000_000L;
 
     private String resolveUserName(UUID contestId, UUID userId) {
         return participantRepository.findByContestIdAndUserId(contestId, userId)
@@ -88,10 +92,17 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         // Mark as solved in Redis
         redisTemplate.opsForSet().add(solvedKey, event.getProblemId().toString());
 
-        // Update Redis sorted set
+        // Composite score: points * TIME_BUCKET - secondsFromContestStart
+        // Ensures sorting by points first, then by earliest solve time for ties
+        long secondsElapsed = Math.max(0,
+                Instant.now().getEpochSecond() - contest.getStartTime().getEpochSecond());
+        long compositeIncrement = (long) event.getScore() * TIME_BUCKET - secondsElapsed;
+
         String leaderboardKey = String.format(LEADERBOARD_KEY, event.getContestId());
-        redisTemplate.opsForZSet().incrementScore(
-                leaderboardKey, event.getUserId().toString(), event.getScore());
+        String scoresKey = String.format(SCORES_KEY, event.getContestId());
+
+        redisTemplate.opsForZSet().incrementScore(leaderboardKey, event.getUserId().toString(), compositeIncrement);
+        redisTemplate.opsForHash().increment(scoresKey, event.getUserId().toString(), event.getScore());
 
         // Update PostgreSQL
         Leaderboard entry = leaderboardRepository
@@ -114,8 +125,6 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         leaderboardRepository.save(entry);
 
         recalculateRanks(event.getContestId());
-
-        // Broadcast via WebSocket
         broadcastLeaderboard(event.getContestId());
 
         log.info("Leaderboard updated: user={} contest={} score={} problemsSolved={}",
@@ -142,15 +151,22 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         leaderboardRepository.saveAll(entries);
     }
 
+    private int actualScore(String scoresKey, String userId) {
+        Object val = redisTemplate.opsForHash().get(scoresKey, userId);
+        if (val == null) return 0;
+        return Integer.parseInt(val.toString());
+    }
+
     private Page<LeaderboardResponse> buildFromRedis(UUID contestId,
                                                       Set<ZSetOperations.TypedTuple<String>> entries,
                                                       Pageable pageable) {
         int rank = (int) pageable.getOffset() + 1;
         List<LeaderboardResponse> results = new ArrayList<>();
+        String scoresKey = String.format(SCORES_KEY, contestId);
 
         for (ZSetOperations.TypedTuple<String> entry : entries) {
             UUID userId = UUID.fromString(entry.getValue());
-            int score = entry.getScore() != null ? entry.getScore().intValue() : 0;
+            int score = actualScore(scoresKey, entry.getValue());
 
             String solvedKey = String.format(SOLVED_KEY, contestId, userId);
             Long solved = redisTemplate.opsForSet().size(solvedKey);
@@ -161,14 +177,14 @@ public class LeaderboardServiceImpl implements LeaderboardService {
             ));
         }
 
-        Long total = redisTemplate.opsForZSet().zCard(
-                String.format(LEADERBOARD_KEY, contestId));
-
+        Long total = redisTemplate.opsForZSet().zCard(String.format(LEADERBOARD_KEY, contestId));
         return new PageImpl<>(results, pageable, total != null ? total : results.size());
     }
 
     private void broadcastLeaderboard(UUID contestId) {
         String key = String.format(LEADERBOARD_KEY, contestId);
+        String scoresKey = String.format(SCORES_KEY, contestId);
+
         Set<ZSetOperations.TypedTuple<String>> top10 =
                 redisTemplate.opsForZSet().reverseRangeWithScores(key, 0, 9);
 
@@ -178,7 +194,7 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         List<LeaderboardResponse> results = new ArrayList<>();
         for (ZSetOperations.TypedTuple<String> entry : top10) {
             UUID userId = UUID.fromString(entry.getValue());
-            int score = entry.getScore() != null ? entry.getScore().intValue() : 0;
+            int score = actualScore(scoresKey, entry.getValue());
             String solvedKey = String.format(SOLVED_KEY, contestId, userId);
             Long solved = redisTemplate.opsForSet().size(solvedKey);
             results.add(new LeaderboardResponse(

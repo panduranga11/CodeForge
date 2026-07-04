@@ -5,6 +5,7 @@ import com.codeforge.execution.submission.dto.TestCaseDto;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
@@ -21,9 +22,11 @@ public interface ContestServiceClient {
     ApiResponse<Boolean> checkParticipant(@PathVariable UUID contestId, @PathVariable UUID userId);
 
     @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}")
-    ApiResponse<Map<String, Object>> getProblem(@PathVariable UUID contestId, @PathVariable UUID problemId);
+    ApiResponse<Map<String, Object>> getProblem(@PathVariable UUID contestId, @PathVariable UUID problemId,
+                                                 @RequestHeader("X-User-Id") UUID userId);
 
     @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}/testcases")
     ApiResponse<List<TestCaseDto>> getTestCases(@PathVariable UUID contestId, @PathVariable UUID problemId,
-                                                 @RequestParam("type") String type);
+                                                 @RequestParam("type") String type,
+                                                 @RequestHeader("X-User-Id") UUID userId);
 }

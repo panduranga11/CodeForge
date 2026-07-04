@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Users, Calendar, Clock, LogIn } from 'lucide-react';
 import { toast } from 'sonner';
 import { contestApi } from '@/features/contests/services/contestApi';
+import { useAuthStore } from '@/features/auth/hooks/useAuthStore';
 import { formatDateTime } from '@/shared/lib/format';
 import { Button, Skeleton } from '@/shared/components/ui';
 import type { AxiosError } from 'axios';
@@ -11,11 +13,18 @@ import type { ApiResponse } from '@/shared/types';
 export function JoinContestPage() {
   const { inviteCode } = useParams<{ inviteCode: string }>();
   const navigate = useNavigate();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: `/join/${inviteCode}` }, replace: true });
+    }
+  }, [isAuthenticated, inviteCode, navigate]);
 
   const { data: contestData, isLoading, error } = useQuery({
     queryKey: ['join-preview', inviteCode],
     queryFn: () => contestApi.getByInviteCode(inviteCode!),
-    enabled: !!inviteCode,
+    enabled: !!inviteCode && isAuthenticated,
     retry: false,
   });
 
@@ -28,6 +37,8 @@ export function JoinContestPage() {
     onError: (err: AxiosError<ApiResponse<never>>) =>
       toast.error(err.response?.data?.message ?? 'Failed to join contest'),
   });
+
+  if (!isAuthenticated) return null;
 
   if (isLoading) {
     return (

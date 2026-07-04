@@ -55,7 +55,7 @@ public class SubmissionServiceImpl implements SubmissionService {
             validateContestActive(request.contestId());
             validateParticipant(request.contestId(), userId);
 
-            Map<String, Object> problem = fetchProblem(request.contestId(), request.problemId());
+            Map<String, Object> problem = fetchProblem(request.contestId(), request.problemId(), userId);
             int baseTimeMs = ((Number) problem.get("timeLimit")).intValue() * 1000;
             int baseMemoryMB = ((Number) problem.get("memoryLimit")).intValue();
             points = ((Number) problem.get("points")).intValue();
@@ -65,7 +65,7 @@ public class SubmissionServiceImpl implements SubmissionService {
             timeLimitMs = (int) (baseTimeMs * langLimits.getTimeMultiplier());
             memoryLimitMB = (int) (baseMemoryMB * langLimits.getMemoryMultiplier());
 
-            testCases = fetchTestCases(request.contestId(), request.problemId());
+            testCases = fetchTestCases(request.contestId(), request.problemId(), userId);
         } else {
             timeLimitMs = 2000;
             memoryLimitMB = 256;
@@ -183,14 +183,14 @@ public class SubmissionServiceImpl implements SubmissionService {
         }
     }
 
-    private Map<String, Object> fetchProblem(UUID contestId, UUID problemId) {
-        ApiResponse<Map<String, Object>> response = contestClient.getProblem(contestId, problemId);
+    private Map<String, Object> fetchProblem(UUID contestId, UUID problemId, UUID userId) {
+        ApiResponse<Map<String, Object>> response = contestClient.getProblem(contestId, problemId, userId);
         return response.getData();
     }
 
-    private List<TestCaseDto> fetchTestCases(UUID contestId, UUID problemId) {
+    private List<TestCaseDto> fetchTestCases(UUID contestId, UUID problemId, UUID userId) {
         try {
-            ApiResponse<List<TestCaseDto>> response = contestClient.getTestCases(contestId, problemId, "HIDDEN");
+            ApiResponse<List<TestCaseDto>> response = contestClient.getTestCases(contestId, problemId, "HIDDEN", userId);
             return response.getData();
         } catch (Exception e) {
             log.error("Failed to fetch test cases for problem {} in contest {}: {}",

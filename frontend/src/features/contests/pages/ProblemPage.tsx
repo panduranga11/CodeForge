@@ -172,7 +172,14 @@ export function ProblemPage() {
     mutationFn: () =>
       executionApi.submit({ problemId: problemId!, contestId, language, sourceCode }),
     onSuccess: (data) => { toast.success('Submitted!'); judge.startJudging(data.data.id); },
-    onError: () => toast.error('Submission failed'),
+    onError: (err: import('axios').AxiosError<import('@/shared/types').ApiResponse<never>>) => {
+      const code = err.response?.data?.errorCode;
+      if (code === 'CONTEST_NOT_ACTIVE') {
+        toast.error('Contest has ended — submissions are no longer accepted');
+      } else {
+        toast.error(err.response?.data?.message ?? 'Submission failed');
+      }
+    },
   });
 
   // ── Run ───────────────────────────────────────────────────────────────────

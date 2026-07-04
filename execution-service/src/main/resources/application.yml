@@ -60,7 +60,7 @@ app:
     compilation-timeout-seconds: 30
     max-source-code-bytes: 65536          # 64KB (Codeforces: 64KB)
     rate-limit: 10                         # max submissions per window (LeetCode ~10)
-    rate-limit-window-minutes: 10
+    rate-limit-window-minutes: 5
     languages:
       JAVA:
         time-multiplier: 2.0              # Java gets 2x base time (Codeforces standard)

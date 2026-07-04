@@ -6,6 +6,16 @@ import org.springframework.stereotype.Component;
 @Component
 public class VerdictStep extends ExecutionStep {
 
+    private String verdictLabel(Verdict v) {
+        return switch (v) {
+            case WA -> "Wrong answer";
+            case TLE -> "Time limit exceeded";
+            case MLE -> "Memory limit exceeded";
+            case RE -> "Runtime error";
+            default -> v.name();
+        };
+    }
+
     @Override
     protected PipelineContext handle(PipelineContext ctx) {
         if (ctx.getTestResults().isEmpty()) {
@@ -16,7 +26,7 @@ public class VerdictStep extends ExecutionStep {
         for (PipelineContext.TestResult tr : ctx.getTestResults()) {
             if (tr.getVerdict() != Verdict.AC) {
                 ctx.setFinalVerdict(tr.getVerdict());
-                ctx.setErrorMessage(tr.getVerdict().name() + " on test case " + tr.getTestCaseId());
+                ctx.setErrorMessage(verdictLabel(tr.getVerdict()) + " on hidden test case");
                 return ctx;
             }
         }

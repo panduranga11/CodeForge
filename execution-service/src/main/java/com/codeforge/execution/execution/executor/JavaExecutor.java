@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 @Slf4j
@@ -24,13 +26,21 @@ public class JavaExecutor implements LanguageExecutor {
         return Language.JAVA;
     }
 
+    private static final Pattern PUBLIC_CLASS = Pattern.compile("public\\s+class\\s+(\\w+)");
+
+    private String extractClassName(String sourceCode) {
+        Matcher m = PUBLIC_CLASS.matcher(sourceCode);
+        return m.find() ? m.group(1) : "Main";
+    }
+
     @Override
     public CompilationResult compile(String sourceCode, String workDir) {
         try {
-            Path sourceFile = Path.of(workDir, "Main.java");
+            String className = extractClassName(sourceCode);
+            Path sourceFile = Path.of(workDir, className + ".java");
             Files.writeString(sourceFile, sourceCode);
 
-            return dockerSandbox.compile(dockerImage, "javac Main.java", workDir, 30);
+            return dockerSandbox.compile(dockerImage, "javac " + className + ".java", workDir, 30);
         } catch (Exception e) {
             log.error("Java compilation error: {}", e.getMessage());
             return CompilationResult.failed(e.getMessage());
@@ -39,7 +49,18 @@ public class JavaExecutor implements LanguageExecutor {
 
     @Override
     public ExecutionResult execute(String workDir, String input, int timeLimitMs, int memoryLimitMB) {
-        String command = "java -Xmx" + memoryLimitMB + "m Main";
-        return dockerSandbox.execute(dockerImage, command, workDir, input, timeLimitMs, memoryLimitMB);
+        // Re-extract class name to find the correct entry point
+        try {
+            String className = Files.list(Path.of(workDir))
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .findFirst()
+                    .map(p -> p.getFileName().toString().replace(".java", ""))
+                    .orElse("Main");
+            String command = "java -Xmx" + memoryLimitMB + "m " + className;
+            return dockerSandbox.execute(dockerImage, command, workDir, input, timeLimitMs, memoryLimitMB);
+        } catch (Exception e) {
+            log.error("Java execution error: {}", e.getMessage());
+            return ExecutionResult.runtimeError(e.getMessage(), 0, 0);
+        }
     }
 }
