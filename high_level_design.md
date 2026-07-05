@@ -1,9 +1,9 @@
 # High Level Design (HLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.7
+**Version:** 2.0
 **Status:** Draft
-**Date:** 2026-06-27
+**Date:** 2026-07-05
 **Changes:**
 - v1.1: Added self-service "Host a Contest" flow with invite link/code system
 - v1.2: Added OAuth2 authentication (Google, GitHub)
@@ -13,6 +13,8 @@
 - v1.6: Scoped problems to contests — problems table gains `contest_id` FK, `points`, `sequence_no`; removed `visibility` and the `contest_problems` junction table; nested problem routes under `/contest/v1/contests/{contestId}/problems`; updated public routes, data flows, and internal service-to-service test-case fetch path
 - v1.7: Aligned with actual implementation — execution uses ProcessBuilder (not Docker yet), OpenFeign for inter-service calls, Redis sorted sets for leaderboard, WebSocket/STOMP for live leaderboard broadcast, updated rate limits (10/10min), code size limit (64KB), Spring Boot 4.1.0; added CacheService, WebSocketConfig, Kafka consumers to contest service
 - v1.8: All Contest Service timestamps changed from `LocalDateTime` to `Instant` (UTC); implemented `ContestLifecycleScheduler` (30s polling, auto-transitions SCHEDULED→ACTIVE→COMPLETED); added `@EnableScheduling`; enhanced `GlobalExceptionHandler` with handlers for `IllegalArgumentException`, `DataIntegrityViolationException`, `HttpMessageNotReadableException`
+- v1.9: Docker sandbox execution (per-language runner images); Java class name extracted via regex; SecurityValidatorStep full banned-pattern lists; Feign inter-service calls pass `X-User-Id`; leaderboard composite score (`points × 10M − seconds`) with separate score hash; human-readable verdict messages; invite link redirect-after-login; "Contest has ended" toast; scheduler reduced to 10s; Kafka `auto-offset-reset: latest` (dev)
+- v2.0: Problem access control (`verifyProblemAccess()` — DRAFT/SCHEDULED locked, ACTIVE requires participant registration, COMPLETED open to all); `GET /contest/v1/contests/participating` endpoint for contests a user has joined; `explore()` filters PUBLIC + ACTIVE/SCHEDULED/COMPLETED only (DRAFT never leaks to discovery feed); invite link built dynamically from `inviteCode + INVITE_LINK_BASE` env var at response time (never stored in DB, domain-change-safe); Kafka consumer retry backoff tuned (`reconnect.backoff.ms: 2000`, `reconnect.backoff.max.ms: 30000`)
 
 ---
 
@@ -55,7 +57,7 @@ The platform serves three actor types (Students, Organizers/Hosts, Admins) and s
 |---|---|
 | **Loose Coupling** | Independent microservices communicating via REST and events |
 | **High Availability** | Stateless services, Redis caching, database replication |
-| **Secure Execution** | Process-based execution with security validation (Docker sandbox planned) |
+| **Secure Execution** | Docker sandbox per language (runner images) with banned-pattern pre-checks |
 | **Scalability** | Services scale independently based on load |
 | **AI Integration** | Dedicated AI service using Spring AI with LLM providers |
 | **Self-Service Hosting** | Any user can host a contest — role upgrade is automatic, no admin gate |
@@ -103,7 +105,7 @@ The platform serves three actor types (Students, Organizers/Hosts, Admins) and s
 | Event Streaming | **Apache Kafka** | Decouples producers (Execution, Contest) from consumers (Leaderboard, Analytics); multiple independent subscribers per topic |
 | Service Discovery | **Spring Cloud Eureka** | Enables independent scaling; Gateway load-balances across registered instances |
 | Auth | JWT Stateless + OAuth2 | No session storage needed; Google/GitHub one-click login |
-| Code Execution | ProcessBuilder + security validation | Process-based with banned-pattern checks; Docker sandbox planned for v2 |
+| Code Execution | Docker sandbox + security validation | Per-language Docker runner images with banned-pattern pre-checks; `DockerSandbox` wraps container exec |
 | AI Provider | Spring AI + OpenAI/Gemini | Abstracted, swappable LLM backend |
 | Cache | Redis | Fast leaderboard, rate limiting, token blacklist |
 | Database | PostgreSQL per service | Independent data ownership |
@@ -326,8 +328,8 @@ Contest Service  (@EnableScheduling)
 | Method | Path | Access |
 |---|---|---|
 | `POST` | `/contest/v1/contests/{cId}/problems` | Contest Host |
-| `GET` | `/contest/v1/contests/{cId}/problems` | Contest Host / Participants (ACTIVE) |
-| `GET` | `/contest/v1/contests/{cId}/problems/{pId}` | Contest Host / Participants (ACTIVE) |
+| `GET` | `/contest/v1/contests/{cId}/problems` | Host always; DRAFT/SCHEDULED → locked; ACTIVE → registered participants; COMPLETED → all |
+| `GET` | `/contest/v1/contests/{cId}/problems/{pId}` | Same access rules as list |
 | `PATCH` | `/contest/v1/contests/{cId}/problems/{pId}` | Contest Host |
 | `POST` | `/contest/v1/contests/{cId}/problems/{pId}/testcases` | Contest Host |
 | `PATCH` | `/contest/v1/contests/{cId}/problems/{pId}/publish` | Contest Host |
@@ -335,7 +337,8 @@ Contest Service  (@EnableScheduling)
 | `POST` | `/contest/v1/contests` | Organizer, Admin |
 | **`POST`** | **`/contest/v1/contests/host`** | **Any Authenticated User** |
 | `GET` | `/contest/v1/contests` | All |
-| `GET` | `/contest/v1/contests/explore` | All |
+| `GET` | `/contest/v1/contests/explore` | All (PUBLIC + ACTIVE/SCHEDULED/COMPLETED only) |
+| **`GET`** | **`/contest/v1/contests/participating`** | **Authenticated (joined contests)** |
 | `GET` | `/contest/v1/contests/{id}` | All |
 | `PATCH` | `/contest/v1/contests/{id}/schedule` | Contest Host |
 | `POST` | `/contest/v1/contests/{id}/cancel` | Contest Host |
@@ -626,13 +629,13 @@ Execution Service — SubmissionController
   │
   ├── Validate: language supported, code not empty, code size ≤ 64KB
   ├── Validate: rate limit (Redis with DB fallback) → max 10 submissions / 10 min
-  ├── Call Contest Service (via OpenFeign): GET /contest/v1/contests/{contestId}
-  │         └── Validate: contest is ACTIVE
-  ├── Call Contest Service (via OpenFeign): GET /contest/v1/contests/{contestId}/participants/{userId}
+  ├── Call Contest Service (via OpenFeign + X-User-Id header): GET /contest/v1/contests/{contestId}
+  │         └── Validate: contest is ACTIVE (returns CONTEST_NOT_ACTIVE if not)
+  ├── Call Contest Service (via OpenFeign + X-User-Id header): GET /participants/{userId}
   │         └── Validate: user is registered participant
-  ├── Call Contest Service (via OpenFeign): GET /contest/v1/contests/{contestId}/problems/{problemId}
+  ├── Call Contest Service (via OpenFeign + X-User-Id header): GET /problems/{problemId}
   │         └── Fetch problem details, apply language time/memory multipliers
-  ├── Call Contest Service (via OpenFeign): GET /contest/v1/contests/{contestId}/problems/{problemId}/testcases
+  ├── Call Contest Service (via OpenFeign + X-User-Id header): GET /problems/{problemId}/testcases
   │         └── Fetch hidden test cases for evaluation
   ├── Create Submission record { status: PENDING } in execution_db
   ├── Return HTTP 202 { submissionId }   ← API responds immediately, never blocks
@@ -647,18 +650,25 @@ Execution Service — SubmissionController
      Execution Worker (ExecutionService consumer)
             │
             ├── SyntaxValidatorStep → reject empty/malformed code
-            ├── SecurityValidatorStep → block dangerous patterns per language
+            ├── SecurityValidatorStep → block dangerous patterns per language:
+            │         Java: Runtime.getRuntime, ProcessBuilder, System.exit, java.net.*, java.io.File, ...
+            │         Python: os.system, subprocess, eval(, exec(, open(, socket, ...
+            │         C++: system(, popen(, fork(, fopen(, socket(, asm(, ...
+            │         JS: child_process, require('fs'), process.exit, eval(, Function(, ...
             ├── ExecutorFactory.getExecutor(language)
             │         → JavaExecutor / PythonExecutor / CppExecutor / JSExecutor
             │
-            ├── [ProcessBuilder] Compile code (Java, C++ only)
+            ├── [DockerSandbox] Compile code (Java, C++ only)
+            │         Java: extracts public class name via regex → saves as {ClassName}.java → javac
+            │         C++: g++ -O2 -o solution solution.cpp
             │         → On failure → verdict: CE, store error message
             │
-            ├── [ProcessBuilder] Execute against each hidden test case
+            ├── [DockerSandbox] Execute against each hidden test case in container
             │         → Enforce time limit (with language multiplier) + memory limit
             │         → Record: passed/failed, time(ms), memory(MB)
             │
             ├── Determine final verdict (first non-AC or all AC)
+            ├── VerdictStep sets human-readable error message: "Wrong answer on hidden test case"
             ├── Update Submission record { verdict, time, memory } in execution_db
             │
             └── Publish to Kafka: topic → "submission.completed"
@@ -671,9 +681,10 @@ Execution Service — SubmissionController
    [Kafka Consumer Group: leaderboard]          [Kafka Consumer Group: analytics]
             │                                                │
             ├── Check Redis set for duplicate solve          └── Update problem stats
-            ├── Update Redis sorted set (ZINCRBY)                (acceptance rate,
-            ├── Update leaderboard in contest_db (source of truth) avg solve time)
-            ├── Recalculate ranks                            └── Evict dashboard cache
+            ├── Composite ZINCRBY: points×10M − secondsElapsed  (acceptance rate,
+            ├── Increment scores hash: HINCRBY (display score)    avg solve time)
+            ├── Update leaderboard in contest_db (source of truth) └── Evict dashboard cache
+            ├── Recalculate ranks
             └── Broadcast via WebSocket (STOMP → /topic/leaderboard/{contestId})
 ```
 
@@ -698,9 +709,10 @@ API Gateway → Contest Service
   │
   │ [Real-time updates]
   │ On new AC submission → Kafka event → LeaderboardService:
-  │   ├── SISMEMBER check for duplicate solve (Redis set)
-  │   ├── ZINCRBY to update score in Redis sorted set
-  │   ├── Update contest_db (source of truth)
+  │   ├── SISMEMBER check for duplicate solve (Redis set: solved:contest:{id}:user:{uid})
+  │   ├── ZINCRBY leaderboard:{id} with composite score (points×10M − secondsElapsed)
+  │   ├── HINCRBY scores:contest:{id} for actual display score
+  │   ├── Update contest_db (source of truth: actual score, rank, problems_solved)
   │   └── WebSocket broadcast → /topic/leaderboard/{contestId}
   │
   │ [Live updates via WebSocket]
@@ -755,9 +767,9 @@ Organizer creates Contest (DRAFT)
   ▼
 Organizer schedules Contest (DRAFT → SCHEDULED)
   │
-  └── ContestLifecycleScheduler polls every 30 seconds
+  └── ContestLifecycleScheduler polls every 10 seconds
 
-  [ContestLifecycleScheduler — @Scheduled(fixedRate = 30000)]
+  [ContestLifecycleScheduler — @Scheduled(fixedRate = 10000)]
   │
   ├── Checks: status=SCHEDULED AND startTime <= Instant.now()
   │     └── Transitions to ACTIVE, logs activation
@@ -773,7 +785,7 @@ Organizer schedules Contest (DRAFT → SCHEDULED)
   └── Final leaderboard generated & frozen
 ```
 
-> **Implementation Note:** The lifecycle scheduler uses a single `@Scheduled` method with a 30-second fixed rate. It queries `ContestRepository.findByStatusAndStartTimeBefore()` and `findByStatusAndEndTimeBefore()` to find contests due for transition. All timestamps use `Instant` (UTC) to avoid timezone ambiguity.
+> **Implementation Note:** The lifecycle scheduler uses a single `@Scheduled` method with a 10-second fixed rate. It queries `ContestRepository.findByStatusAndStartTimeBefore()` and `findByStatusAndEndTimeBefore()` to find contests due for transition. All timestamps use `Instant` (UTC) to avoid timezone ambiguity.
 
 ---
 
@@ -810,14 +822,16 @@ API Gateway (resolves 'contest-service' via Eureka)
 Contest Service — ContestController
   ├── Validate all contest fields
   ├── Create Contest { status: DRAFT, hostId: userId }
-  ├── Generate unique 8-char INVITE CODE
-  ├── Build INVITE LINK = "https://codeforge.io/join/{inviteCode}"
-  ├── Store invite_code, invite_link in contests table (contest_db)
+  ├── Generate unique 8-char INVITE CODE → stored in contests table
+  ├── INVITE LINK is NOT stored in DB — built dynamically in toResponse():
+  │       inviteLink = INVITE_LINK_BASE + inviteCode
+  │       INVITE_LINK_BASE = ${INVITE_LINK_BASE:http://localhost:3000/join/}
+  │       (set via env var in production; domain changes need no migration)
   └── Return HTTP 201:
         {
           contestId,
           inviteCode: "XF8K2P9A",
-          inviteLink: "https://codeforge.io/join/XF8K2P9A",
+          inviteLink: "http://localhost:3000/join/XF8K2P9A",  ← built at response time
           status: "DRAFT"
         }
   │
@@ -846,10 +860,10 @@ Participant receives invite link: https://codeforge.io/join/XF8K2P9A
 Browser navigates to invite URL
   │
   [If user is NOT logged in]
-  │   Frontend detects missing/expired JWT
-  │   → Redirect to /login?redirect=/join/XF8K2P9A
+  │   JoinContestPage detects missing/expired JWT (useAuthStore.isAuthenticated = false)
+  │   → navigate('/login', { state: { from: '/join/XF8K2P9A' }, replace: true })
   │   → User logs in (credentials or OAuth2)
-  │   → Redirected back to /join/XF8K2P9A with valid JWT
+  │   → useLogin.ts reads location.state.from → navigates back to /join/XF8K2P9A
   │
   [User is now authenticated]
   │
@@ -1132,7 +1146,8 @@ Participant sees contest lobby / countdown timer
 
 | Cache Key Pattern | Data Cached | TTL | Invalidation Trigger |
 |---|---|---|---|
-| `leaderboard:{contestId}` | Redis sorted set (scores) | Persistent during contest | Updated on each AC via ZINCRBY |
+| `leaderboard:{contestId}` | Redis sorted set (composite score) | Persistent during contest | ZINCRBY: `points×10M − secondsElapsed` (sort by points, tiebreak by earliest solve) |
+| `scores:contest:{contestId}` | Redis hash (actual points per user) | Persistent during contest | HINCRBY on each AC (display score separate from sort key) |
 | `leaderboard:{contestId}:solved:{userId}` | Redis set (solved problem IDs) | Persistent during contest | SADD on new AC solve |
 | `leaderboard:global:page:{n}` | Global rankings | 5 minutes | Contest completion |
 | `contest:{id}` | Full contest object | 10 seconds | Contest state transition (schedule/cancel/activate/complete) |
@@ -1275,7 +1290,7 @@ ContestLifecycleScheduler — @Scheduled(fixedRate = 30000)
 | **Password Storage** | BCrypt (strength 10) — `NULL` for OAuth-only users |
 | **Token Revocation** | Redis blacklist on logout |
 | **Rate Limiting** | Redis-based (API Gateway + Submission, 10/10min, with DB fallback) |
-| **Code Execution** | ProcessBuilder with security validation (banned-pattern checks per language); Docker sandbox planned for v2 |
+| **Code Execution** | Docker sandbox (`codeforge/*-runner` images) + SecurityValidatorStep banned-pattern checks per language |
 | **Input Validation** | Bean Validation on all request DTOs |
 | **SQL Injection** | JPA/Hibernate parameterized queries only |
 | **Secrets Management** | Environment variables (never hardcoded) |
@@ -1301,7 +1316,7 @@ Signature: HMAC-SHA256(base64(header) + "." + base64(payload), SECRET)
 
 ## 11. Execution Engine Design
 
-The execution engine lives inside the **Execution Service (Port 8083)**, implementing the **Strategy + Factory + Chain of Responsibility** patterns for multi-language code execution. Currently uses **ProcessBuilder** for local process-based execution with security validation. Docker container isolation is planned for v2.
+The execution engine lives inside the **Execution Service (Port 8083)**, implementing the **Strategy + Factory + Chain of Responsibility** patterns for multi-language code execution. Uses **DockerSandbox** to run code in isolated per-language Docker containers (`codeforge/java-runner`, `codeforge/python-runner`, `codeforge/cpp-runner`, `codeforge/js-runner`). SecurityValidatorStep scans source code for banned patterns before compilation.
 
 ### 11.1 Class Design
 
@@ -1364,10 +1379,12 @@ Submission Received
 
 | Language | Compile Command | Execute Command | Time Multiplier | Memory Multiplier | Security Validation (Banned Patterns) |
 |---|---|---|---|---|---|
-| Java 17 | `javac Solution.java` | `java -Xmx{mem}m Solution` | 2.0x | 2.0x | `Runtime.getRuntime`, `ProcessBuilder`, `System.exit`, `java.lang.reflect`, file/network I/O |
-| Python 3 | N/A | `python solution.py` | 3.0x | 2.0x | `os.system`, `subprocess`, `eval`, `exec`, `open`, `socket` |
-| C++ 17 | `g++ -O2 -o solution solution.cpp` | `./solution` | 1.0x (baseline) | 1.0x | `system`, `popen`, `fork`, `fopen`, `socket`, `asm` |
-| JavaScript | N/A | `node solution.js` | 2.5x | 2.0x | `child_process`, `fs`, `net`, `http`, `process.exit`, `eval` |
+| Java 17 | `javac {ClassName}.java` _(class name extracted via regex)_ | `java -Xmx{mem}m {ClassName}` | 2.0x | 2.0x | `Runtime.getRuntime`, `ProcessBuilder`, `System.exit`, `java.lang.reflect`, `java.net.*`, `java.io.File`, `java.nio.file`, `ClassLoader`, `SecurityManager`, `System.getenv` |
+| Python 3 | N/A | `python solution.py` | 3.0x | 2.0x | `os.system`, `os.popen`, `os.exec`, `os.spawn`, `os.kill`, `subprocess`, `__import__`, `eval(`, `exec(`, `compile(`, `open(`, `shutil`, `socket`, `importlib`, `ctypes`, `multiprocessing`, `threading` |
+| C++ 17 | `g++ -O2 -o solution solution.cpp` | `./solution` | 1.0x (baseline) | 1.0x | `system(`, `popen(`, `fork(`, `execvp(`, `fopen(`, `freopen(`, `remove(`, `rename(`, `socket(`, `connect(`, `bind(`, `listen(`, `#include <thread>`, `#include <fstream>`, `asm(`, `__asm__` |
+| JavaScript | N/A | `node solution.js` | 2.5x | 2.0x | `child_process`, `require('fs')`, `require("fs")`, `require('net')`, `require('http')`, `require('os')`, `require('path')`, `process.exit`, `process.env`, `process.kill`, `eval(`, `Function(` |
+
+> **Docker Images:** Each executor delegates to `DockerSandbox`, which runs compile/execute commands inside the corresponding language-specific Docker container. The class name for Java is extracted via `public\s+class\s+(\w+)` regex to support any user-defined class name.
 
 ---
 
@@ -1469,7 +1486,7 @@ On parse failure:
 | **RabbitMQ** | **3.x** | **Execution work queue — buffers submission spikes** |
 | **Apache Kafka** | **3.x** | **Event streaming — decoupled cross-service events** |
 | **Spring Cloud Eureka** | **4.x** | **Service registry — name-based discovery & load balancing** |
-| Docker | 24.x | Containerization (Redis runs in Docker; code sandbox planned for v2) |
+| Docker | 24.x | Containerization — per-language runner images (`codeforge/java-runner`, `codeforge/python-runner`, `codeforge/cpp-runner`, `codeforge/js-runner`) + infrastructure containers |
 | Docker Compose | 2.x | Local development orchestration |
 
 ### 13.3 Frontend
@@ -1549,6 +1566,7 @@ Each service reads from environment variables:
   JWT_SECRET, JWT_EXPIRY
   AI_PROVIDER_API_KEY
   CORS_ALLOWED_ORIGINS
+  INVITE_LINK_BASE  (Contest Service only — base URL for invite links, e.g. https://yourdomain.com/join/)
 ```
 
 ---
@@ -1629,5 +1647,5 @@ Future v2.0 — Execution scales to Kubernetes:
 
 ---
 
-*Document Version: 1.7 | CodeForge Platform*
+*Document Version: 2.0 | CodeForge Platform*
 *Next: Low Level Design (LLD) — Class Diagrams & Sequence Diagrams*

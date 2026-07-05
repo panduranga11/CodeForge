@@ -1,10 +1,10 @@
 # Low Level Design (LLD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.4
+**Version:** 1.6
 **Status:** Draft
-**Date:** 2026-06-27
-**Based on:** HLD v1.7
+**Date:** 2026-07-05
+**Based on:** HLD v2.0
 
 **Changes:**
 - v1.0: Initial LLD aligned with HLD v1.5
@@ -12,6 +12,8 @@
 - v1.2: Execution Service hardening — removed `problemsSolved` from `SubmissionCompletedEvent` (computed by leaderboard consumer); added `@Size(max=50000)` to `sourceCode`; simplified `TestCaseDto` (removed per-test-case limits, added `scoreWeight`); added DLQ + retry policy for RabbitMQ; added stale submission sweeper
 - v1.3: Aligned with actual implementation — RestTemplate replaced with OpenFeign (`ContestServiceClient`); leaderboard entity gains `solvedProblemIds` column; Kafka consumers split into `LeaderboardKafkaConsumer` and `AnalyticsKafkaConsumer`; added `CacheService`, `RedisConfig`, `WebSocketConfig` to contest service; execution uses ProcessBuilder (not Docker); rate limit 10/10min; `SubmissionMessage` gains `points` field; `StaleSubmissionSweeper` marks as RE not FAILED; updated sequence diagram to show OpenFeign and ProcessBuilder
 - v1.4: All Contest Service timestamps changed from `LocalDateTime` to `Instant` (UTC) across entities, DTOs, and API contracts; renamed `ContestSchedulerService` → `ContestLifecycleScheduler` to match implementation; added `ContestRepository` scheduler query methods (`findByStatusAndStartTimeBefore`, `findByStatusAndEndTimeBefore`); `GlobalExceptionHandler` gains `IllegalArgumentException`, `DataIntegrityViolationException`, `HttpMessageNotReadableException` handlers; `ApiResponse.timestamp` is now `Instant`; `LeaderboardResponse` drops `fullName` (resolved at frontend); `@EnableScheduling` on `ContestServiceApplication`; updated API contract examples to use ISO-8601 UTC timestamps
+- v1.5: Execution migrated to Docker sandbox (`DockerSandbox` + per-language images); `JavaExecutor` extracts public class name via regex instead of hardcoding `Main.java`; `SecurityValidatorStep` full banned-pattern maps documented per language; `ContestServiceClient` Feign methods gain `@RequestHeader("X-User-Id")` on `getProblem` and `getTestCases`; leaderboard Redis uses composite score (`points × 10,000,000 − secondsFromContestStart`) in sorted set + separate `scores:contest:{id}` hash for display score; `VerdictStep` uses `verdictLabel()` for human-readable error messages; `ContestLifecycleScheduler` `fixedRate` reduced to 10 s; Kafka `auto-offset-reset: latest` (dev)
+- v1.6: `ProblemServiceImpl` gains `verifyProblemAccess()` — DRAFT/SCHEDULED → 403 "Problems are not available yet", ACTIVE → checks `participantRepository.existsByContestIdAndUserId()`, COMPLETED → open; `ContestParticipantRepository` gains `findContestsByUserId` JPQL query; `ContestRepository` gains `findByStatusInAndVisibilityAndDeletedAtIsNull`; `ContestService` gains `participating()`; invite link removed from DB — built dynamically in `toResponse()` from `inviteCode + inviteLinkBase` (`@Value("${app.invite-link-base}")`); `GET /contest/v1/contests/participating` endpoint added; Kafka consumer retry backoff configured
 
 ---
 
@@ -156,7 +158,9 @@ Indexes:
 │ scoring_mode     │ ENUM(POINTS, PENALTY_TIME, PERCENTAGE) NOT NULL│
 │ max_participants │ INTEGER  NULL  (unlimited if null)             │
 │ invite_code      │ VARCHAR(8)  UNIQUE  NULL                       │
-│ invite_link      │ VARCHAR(500)  NULL                             │
+│ invite_link      │ VARCHAR(500)  NULL  ← legacy column; NOT used  │
+│                  │   link is built dynamically in toResponse()    │
+│                  │   from inviteCode + INVITE_LINK_BASE env var   │
 │ host_id          │ UUID  NOT NULL  (user_id from auth_db, no FK)  │
 │ created_by       │ UUID  NOT NULL  (user_id from auth_db, no FK)  │
 │ created_at       │ TIMESTAMPTZ  NOT NULL  (Instant)               │
@@ -650,8 +654,10 @@ class Contest {
     RegType       regType;       // ENUM: OPEN | INVITE_ONLY
     ScoringMode   scoringMode;   // ENUM: POINTS | PENALTY_TIME | PERCENTAGE
     Integer       maxParticipants;  // nullable
-    String        inviteCode;    // 8-char unique string, nullable
-    String        inviteLink;    // full URL (VARCHAR 500), nullable
+    String        inviteCode;    // 8-char unique string, nullable — stored in DB
+    // inviteLink is NOT stored in DB; built dynamically in toResponse():
+    //   inviteLink = inviteLinkBase + inviteCode
+    //   inviteLinkBase injected via @Value("${app.invite-link-base:http://localhost:3000/join/}")
     UUID          hostId;        // user_id from auth_db (no FK)
     UUID          createdBy;     // user_id from auth_db (no FK)
     Instant       deletedAt;     // soft delete (UTC)
@@ -726,6 +732,10 @@ interface TestCaseRepository extends JpaRepository<TestCase, UUID> {
 
 interface ContestRepository extends JpaRepository<Contest, UUID> {
     Optional<Contest>   findByInviteCode(String inviteCode);
+    // explore() — PUBLIC + ACTIVE/SCHEDULED/COMPLETED only (DRAFT never leaks)
+    Page<Contest>       findByStatusInAndVisibilityAndDeletedAtIsNull(
+                            List<ContestStatus> statuses, Visibility v, Pageable p);
+    // legacy single-status variant kept for internal scheduler use
     Page<Contest>       findByStatusAndVisibilityAndDeletedAtIsNull(
                             ContestStatus s, Visibility v, Pageable p);
     List<Contest>       findByHostIdAndDeletedAtIsNull(UUID hostId);
@@ -739,6 +749,12 @@ interface ContestParticipantRepository extends JpaRepository<ContestParticipant,
     boolean             existsByContestIdAndUserId(UUID contestId, UUID userId);
     long                countByContestId(UUID contestId);
     Optional<ContestParticipant> findByContestIdAndUserId(UUID contestId, UUID userId);
+
+    // Returns contests a user has joined, ordered by registration time desc
+    @Query("SELECT cp.contest FROM ContestParticipant cp " +
+           "WHERE cp.userId = :userId AND cp.contest.deletedAt IS NULL " +
+           "ORDER BY cp.registeredAt DESC")
+    Page<Contest> findContestsByUserId(@Param("userId") UUID userId, Pageable pageable);
 }
 
 // ContestProblemRepository — REMOVED (problems have direct contest_id FK)
@@ -757,20 +773,28 @@ interface LeaderboardRepository extends JpaRepository<Leaderboard, UUID> {
 // Problems are scoped to contests — all operations require contestId
 interface ProblemService {
     ProblemResponse      create(UUID contestId, CreateProblemRequest req, UUID userId);
-    ProblemResponse      getById(UUID contestId, UUID problemId);
-    List<ProblemResponse> listByContest(UUID contestId);
+    ProblemResponse      getById(UUID contestId, UUID problemId, UUID requesterId);
+    List<ProblemResponse> listByContest(UUID contestId, UUID requesterId);
     ProblemResponse      update(UUID contestId, UUID problemId, UpdateProblemRequest req, UUID userId);
     TestCaseResponse     addTestCase(UUID contestId, UUID problemId, CreateTestCaseRequest req, UUID userId);
     ProblemResponse      publish(UUID contestId, UUID problemId, UUID userId);
     void                 delete(UUID contestId, UUID problemId, UUID userId);
 }
 
+// Access control enforced in ProblemServiceImpl via verifyProblemAccess():
+//   Host (hostId == requesterId)    → always allowed (bypasses check)
+//   DRAFT / SCHEDULED / CANCELLED   → throw UnauthorizedAccessException("Problems are not available yet")
+//   ACTIVE                          → participantRepository.existsByContestIdAndUserId() required
+//                                     throw UnauthorizedAccessException("Registration Required") if not registered
+//   COMPLETED                       → allowed for all authenticated users
+
 interface ContestService {
     ContestResponse      create(CreateContestRequest req, UUID hostId);
     ContestResponse      getById(UUID id);
     ContestResponse      getByInviteCode(String inviteCode);
     Page<ContestResponse> list(Pageable p);
-    Page<ContestResponse> explore(Pageable p);
+    Page<ContestResponse> explore(Pageable p);                    // PUBLIC + ACTIVE/SCHEDULED/COMPLETED
+    Page<ContestResponse> participating(UUID userId, Pageable p); // contests userId has joined
     ContestResponse      schedule(UUID contestId, UUID userId);
     ContestResponse      cancel(UUID contestId, UUID userId);
     JoinContestResponse  join(JoinContestRequest req, UUID userId);
@@ -881,7 +905,7 @@ class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 class ContestLifecycleScheduler {
     private final ContestRepository contestRepository;
 
-    @Scheduled(fixedRate = 30_000)
+    @Scheduled(fixedRate = 10_000)
     @Transactional
     void transitionContests() {
         Instant now = Instant.now();
@@ -1055,33 +1079,41 @@ interface LanguageExecutor {
 // ── JavaExecutor
 @Component
 class JavaExecutor implements LanguageExecutor {
+    private final DockerSandbox dockerSandbox;
+    private static final Pattern PUBLIC_CLASS = Pattern.compile("public\\s+class\\s+(\\w+)");
+
     Language getLanguage() { return Language.JAVA; }
-    // Compiles: javac Solution.java via ProcessBuilder
-    // Executes: java -Xmx{mem}m Solution via ProcessBuilder with timeout
+    // compile(): extracts class name via regex → saves as {ClassName}.java → dockerSandbox.compile(image, "javac {ClassName}.java", workDir)
+    // execute(): scans workDir for .java file → reads class name → dockerSandbox.execute(image, "java -Xmx{mem}m {ClassName}", ...)
+    // Docker image: codeforge/java-runner
 }
 
 // ── PythonExecutor
 @Component
 class PythonExecutor implements LanguageExecutor {
+    private final DockerSandbox dockerSandbox;
     Language getLanguage() { return Language.PYTHON; }
-    // No compile step
-    // Executes: python solution.py via ProcessBuilder with timeout
+    // No compile step; dockerSandbox.execute(image, "python solution.py", ...)
+    // Docker image: codeforge/python-runner
 }
 
 // ── CppExecutor
 @Component
 class CppExecutor implements LanguageExecutor {
+    private final DockerSandbox dockerSandbox;
     Language getLanguage() { return Language.CPP; }
-    // Compiles: g++ -O2 -o solution solution.cpp via ProcessBuilder
-    // Executes: ./solution via ProcessBuilder with timeout
+    // dockerSandbox.compile(image, "g++ -O2 -o solution solution.cpp", workDir)
+    // dockerSandbox.execute(image, "./solution", workDir, input, timeLimitMs, memLimitMB)
+    // Docker image: codeforge/cpp-runner
 }
 
 // ── JavaScriptExecutor
 @Component
 class JavaScriptExecutor implements LanguageExecutor {
+    private final DockerSandbox dockerSandbox;
     Language getLanguage() { return Language.JAVASCRIPT; }
-    // No compile step
-    // Executes: node solution.js via ProcessBuilder with timeout
+    // No compile step; dockerSandbox.execute(image, "node solution.js", ...)
+    // Docker image: codeforge/js-runner
 }
 
 // ── ExecutorFactory (Factory Pattern via Spring DI)
@@ -1184,21 +1216,29 @@ class SubmissionServiceImpl implements SubmissionService {
 }
 
 // ── OpenFeign Client (inter-service communication)
+// NOTE: Feign calls bypass the API Gateway — they go service-to-service directly.
+// Contest Service security requires X-User-Id on problem/testcase endpoints.
+// The header must be passed explicitly; it is NOT injected by the gateway on internal calls.
 @FeignClient(name = "CONTEST-SERVICE")
 interface ContestServiceClient {
     @GetMapping("/contest/v1/contests/{id}")
-    ApiResponse<ContestResponse> getContest(@PathVariable UUID id);
+    ApiResponse<Map<String, Object>> getContest(@PathVariable UUID id);
 
     @GetMapping("/contest/v1/contests/{contestId}/participants/{userId}")
     ApiResponse<Boolean> checkParticipant(@PathVariable UUID contestId, @PathVariable UUID userId);
 
     @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}")
-    ApiResponse<ProblemResponse> getProblem(@PathVariable UUID contestId, @PathVariable UUID problemId);
+    ApiResponse<Map<String, Object>> getProblem(
+        @PathVariable UUID contestId,
+        @PathVariable UUID problemId,
+        @RequestHeader("X-User-Id") UUID userId);  // required — bypasses gateway header injection
 
     @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}/testcases")
-    ApiResponse<List<TestCaseResponse>> getTestCases(@PathVariable UUID contestId,
-                                                     @PathVariable UUID problemId,
-                                                     @RequestParam String type);
+    ApiResponse<List<TestCaseDto>> getTestCases(
+        @PathVariable UUID contestId,
+        @PathVariable UUID problemId,
+        @RequestParam("type") String type,
+        @RequestHeader("X-User-Id") UUID userId);  // required — bypasses gateway header injection
 }
 
 // ── RabbitMQ Message
@@ -1741,7 +1781,7 @@ Client    API GW    AI Svc    ai_db    Exec Svc (internal)    LLM (OpenAI/Gemini
 ```
 ContestLifecycleScheduler    contest_db
          │                       │
-  [@Scheduled(fixedRate=30000)]  │
+  [@Scheduled(fixedRate=10000)]  │
   [@Transactional]               │
          │                       │
          │─findByStatusAndStartTimeBefore(SCHEDULED, Instant.now())
@@ -2140,6 +2180,40 @@ participants see only PUBLISHED problems during an ACTIVE contest.
 
 ---
 
+#### GET /contest/v1/contests/participating
+
+**Headers:** `Authorization: Bearer <accessToken>`
+
+**Query params:** `page=0`, `size=20`
+
+Returns the paginated list of contests the authenticated user has joined (as a participant), ordered by registration time descending. Includes both ACTIVE and past contests.
+
+**Response 200:**
+```json
+{
+  "success": true,
+  "data": {
+    "content": [
+      {
+        "id": "uuid-contest-...",
+        "title": "Weekly Coding Duel",
+        "status": "ACTIVE",
+        "visibility": "PRIVATE",
+        "startTime": "2026-07-05T10:00:00Z",
+        "endTime": "2026-07-05T12:00:00Z",
+        "participantCount": 34,
+        "problemCount": 4,
+        "inviteCode": "XF8K2P9A",
+        "inviteLink": "http://localhost:3000/join/XF8K2P9A"
+      }
+    ],
+    "page": 0, "size": 20, "totalElements": 3
+  }
+}
+```
+
+---
+
 #### PATCH /contest/v1/contests/{id}/schedule
 
 **Response 200:**
@@ -2434,9 +2508,32 @@ class SyntaxValidator extends ExecutionStep {
 
 // Step 2: Security check — block dangerous imports/syscalls
 @Component
-class SecurityValidator extends ExecutionStep {
-    private static final Set<String> BANNED_JAVA   = Set.of("Runtime", "ProcessBuilder", "System.exit");
-    private static final Set<String> BANNED_PYTHON = Set.of("os.system", "subprocess", "__import__");
+class SecurityValidatorStep extends ExecutionStep {
+    // Full banned-pattern maps keyed by language name string:
+    // JAVA:   Runtime.getRuntime, ProcessBuilder, System.exit, java.lang.reflect,
+    //         java.net.Socket, java.net.URL, java.net.HttpURLConnection, java.net.ServerSocket,
+    //         java.io.File, java.io.FileWriter, java.io.FileReader,
+    //         java.io.FileOutputStream, java.io.FileInputStream,
+    //         java.nio.file, ClassLoader, Thread.sleep,
+    //         SecurityManager, System.getenv, System.getProperty
+    // PYTHON: os.system, os.popen, os.exec, os.spawn, os.kill,
+    //         os.remove, os.unlink, os.rmdir, os.rename,
+    //         subprocess, __import__, eval(, exec(, compile(,
+    //         open(, shutil, socket, importlib, ctypes, signal,
+    //         multiprocessing, threading
+    // CPP:    system(, popen(, exec(, fork(, execvp(,
+    //         fopen(, freopen(, remove(, rename(,
+    //         socket(, connect(, bind(, listen(,
+    //         #include <thread>, #include <fstream>, asm(, __asm__
+    // JAVASCRIPT: child_process, require('fs'), require("fs"),
+    //         require('net'), require("net"),
+    //         require('http'), require("http"),
+    //         require('https'), require("https"),
+    //         require('os'), require("os"),
+    //         require('path'), require("path"),
+    //         process.exit, process.env, process.kill,
+    //         eval(, Function(
+    private static final Map<String, Set<String>> BANNED_PATTERNS = Map.of(...);
 
     protected PipelineContext handle(PipelineContext ctx) {
         // Scan source for banned patterns per language
@@ -2475,9 +2572,20 @@ class TestCaseExecutionStep extends ExecutionStep {
 // Step 5: Verdict determination
 @Component
 class VerdictStep extends ExecutionStep {
+    // verdictLabel() maps Verdict enum → human-readable string:
+    //   WA → "Wrong answer", TLE → "Time limit exceeded",
+    //   MLE → "Memory limit exceeded", RE → "Runtime error"
+    // Error message set as: verdictLabel(verdict) + " on hidden test case"
+    // → Hides internal test case UUIDs from user-facing responses
     protected PipelineContext handle(PipelineContext ctx) {
-        // AC if all passed; otherwise first non-AC verdict wins
-        ctx.setFinalVerdict(verdictService.compute(ctx.getTestResults()));
+        for (TestResult tr : ctx.getTestResults()) {
+            if (tr.getVerdict() != Verdict.AC) {
+                ctx.setFinalVerdict(tr.getVerdict());
+                ctx.setErrorMessage(verdictLabel(tr.getVerdict()) + " on hidden test case");
+                return ctx;
+            }
+        }
+        ctx.setFinalVerdict(Verdict.AC);
         return ctx;
     }
 }
@@ -2547,65 +2655,78 @@ class AnalyticsKafkaConsumer {
 
 **Problem:** Leaderboard reads are extremely frequent during active contests. Rankings must update in real-time on each AC submission and push changes to connected clients.
 
-**Pattern:** Redis sorted sets for fast ranking, Redis sets for deduplication, WebSocket for live broadcast, PostgreSQL as source of truth.
+**Pattern:** Redis sorted sets for fast ranking (composite score for correct tiebreaking), Redis hash for actual display scores, Redis sets for deduplication, WebSocket for live broadcast, PostgreSQL as source of truth.
 
 ```java
 @Service
 class LeaderboardServiceImpl implements LeaderboardService {
 
-    private final RedisTemplate<String, String> redisTemplate;
-    private final SimpMessagingTemplate         messagingTemplate;  // WebSocket
-    private final LeaderboardRepository         leaderboardRepo;
+    private static final String LEADERBOARD_KEY = "leaderboard:contest:%s";
+    private static final String SCORES_KEY      = "scores:contest:%s";
+    private static final String SOLVED_KEY      = "solved:contest:%s:user:%s";
+    // 10M seconds > any realistic contest duration — keeps points as dominant tiebreaker factor
+    private static final long   TIME_BUCKET     = 10_000_000L;
 
-    // Read: Redis first, DB fallback
+    // Read: Redis first (sorted set + scores hash), DB fallback
     public Page<LeaderboardResponse> getContestLeaderboard(UUID contestId, Pageable pageable) {
-        String leaderboardKey = "leaderboard:" + contestId;
-
-        // 1. Try Redis sorted set
+        String key = String.format(LEADERBOARD_KEY, contestId);
         Set<ZSetOperations.TypedTuple<String>> entries =
-            redisTemplate.opsForZSet().reverseRangeWithScores(leaderboardKey, 0, -1);
+            redisTemplate.opsForZSet().reverseRangeWithScores(key, start, end);
 
         if (entries != null && !entries.isEmpty()) {
-            // Build response from Redis sorted set entries
-            return buildFromRedis(entries, pageable);
+            // Read actual display scores from the separate hash (sorted set stores composite)
+            return buildFromRedis(contestId, entries, pageable);
         }
-
-        // 2. Fallback to DB
-        Page<Leaderboard> rows = leaderboardRepo.findByContestIdOrderByRankAsc(contestId, pageable);
-        return rows.map(mapper::toResponse);
+        // Fallback to DB (score column = actual points, not composite)
+        return leaderboardRepo.findByContestIdOrderByRankAsc(contestId, pageable)
+            .map(lb -> new LeaderboardResponse(lb.getRank(), lb.getUserId(),
+                resolveUserName(contestId, lb.getUserId()), lb.getScore(), ...));
     }
 
     // Write: called by LeaderboardKafkaConsumer on AC submission
     public void updateOnSubmission(SubmissionCompletedEvent event) {
-        String solvedKey = "leaderboard:" + event.getContestId() + ":solved:" + event.getUserId();
+        String solvedKey = String.format(SOLVED_KEY, event.getContestId(), event.getUserId());
 
-        // 1. Deduplication — check if already solved this problem
-        if (redisTemplate.opsForSet().isMember(solvedKey, event.getProblemId().toString())) {
-            return;  // already counted
-        }
+        // 1. Deduplication check
+        if (Boolean.TRUE.equals(redisTemplate.opsForSet()
+                .isMember(solvedKey, event.getProblemId().toString()))) return;
 
-        // 2. Mark as solved in Redis set
+        // 2. Mark as solved
         redisTemplate.opsForSet().add(solvedKey, event.getProblemId().toString());
 
-        // 3. Update score in Redis sorted set
-        String leaderboardKey = "leaderboard:" + event.getContestId();
+        // 3. Composite score for sorted set:
+        //    points * TIME_BUCKET - secondsElapsed
+        //    → Higher points always rank above lower points
+        //    → Within same points, earlier solve (fewer seconds) ranks higher
+        long secondsElapsed = Math.max(0,
+            Instant.now().getEpochSecond() - contest.getStartTime().getEpochSecond());
+        long compositeIncrement = (long) event.getScore() * TIME_BUCKET - secondsElapsed;
+
+        String leaderboardKey = String.format(LEADERBOARD_KEY, event.getContestId());
+        String scoresKey      = String.format(SCORES_KEY, event.getContestId());
+
         redisTemplate.opsForZSet().incrementScore(leaderboardKey,
+            event.getUserId().toString(), compositeIncrement);
+        // Actual display score stored separately (not composite)
+        redisTemplate.opsForHash().increment(scoresKey,
             event.getUserId().toString(), event.getScore());
 
-        // 4. Update PostgreSQL (source of truth)
-        Leaderboard entry = findOrCreateEntry(event);
+        // 4. Update PostgreSQL (source of truth — stores actual score)
         entry.setScore(entry.getScore() + event.getScore());
         entry.setProblemsSolved(entry.getProblemsSolved() + 1);
         entry.addSolvedProblem(event.getProblemId());
+        entry.setLastAcTime(Instant.now());
         leaderboardRepo.save(entry);
 
-        // 5. Recalculate ranks
         recalculateRanks(event.getContestId());
 
-        // 6. Broadcast via WebSocket
-        messagingTemplate.convertAndSend(
-            "/topic/leaderboard/" + event.getContestId(),
-            getContestLeaderboard(event.getContestId(), PageRequest.of(0, 50)));
+        // 5. Broadcast top-10 via WebSocket
+        messagingTemplate.convertAndSend("/topic/leaderboard/" + event.getContestId(), top10);
+    }
+
+    private int actualScore(String scoresKey, String userId) {
+        Object val = redisTemplate.opsForHash().get(scoresKey, userId);
+        return val == null ? 0 : Integer.parseInt(val.toString());
     }
 }
 ```
@@ -2614,8 +2735,9 @@ class LeaderboardServiceImpl implements LeaderboardService {
 
 | Key Pattern | Type | TTL | Updated By |
 |---|---|---|---|
-| `leaderboard:{contestId}` | Sorted Set | Persistent during contest | ZINCRBY on AC |
-| `leaderboard:{contestId}:solved:{userId}` | Set | Persistent during contest | SADD on new AC solve |
+| `leaderboard:contest:{contestId}` | Sorted Set (composite score) | Persistent during contest | ZINCRBY: `points×10M − secondsElapsed` |
+| `scores:contest:{contestId}` | Hash (userId → actual points) | Persistent during contest | HINCRBY on each AC |
+| `solved:contest:{contestId}:user:{userId}` | Set (solved problem IDs) | Persistent during contest | SADD on new AC solve |
 | `leaderboard:global:page:{n}` | String (cache) | 5 min | Contest completion |
 | `contest:{id}` | String (cache) | 10 sec | Schedule/cancel/activate/complete |
 | `problem:{id}` | String (cache) | 10 min | Problem update/publish/delete |
@@ -2821,5 +2943,5 @@ class ContestMapper {
 
 ---
 
-*Document Version: 1.4 | CodeForge Platform*
+*Document Version: 1.6 | CodeForge Platform*
 *Next: Implementation — Sprint 1 (Auth Service + API Gateway + Eureka)*

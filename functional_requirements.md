@@ -1,9 +1,9 @@
 # Functional Requirements Document (FRD)
 
 **Project:** CodeForge — AI-Powered Coding Assessment, Contest Management & Learning Platform
-**Version:** 1.6
+**Version:** 1.7
 **Status:** Draft
-**Date:** 2026-06-27
+**Date:** 2026-07-04
 **Changes:**
 - v1.1: Added self-service Host a Contest flow (FR-AUTH-008, FR-CONT-009, FR-CONT-010, FR-CONT-011)
 - v1.2: Added OAuth2 authentication via Google and GitHub (FR-AUTH-009, FR-AUTH-010)
@@ -11,6 +11,7 @@
 - v1.4: Scoped problems to contests (no standalone problem library); problems carry `points` + `sequenceNo` and a `contest_id`, `visibility` removed from problems; updated FR-PROB-001..007 and FR-CONT-002 actors to "Contest Host"; marked Problem/Contest requirements as Implemented
 - v1.5: Aligned with actual execution service implementation — code size limit updated to 64KB; execution uses ProcessBuilder with security validation (Docker sandbox planned); rate limit updated to 10/10min; leaderboard uses Redis sorted sets + WebSocket; marked FR-SUB-001..006, FR-LEAD-001, FR-ANAL-002 as Implemented
 - v1.6: All Contest Service timestamps now use `Instant` (UTC) instead of `LocalDateTime`; marked Auth features as Implemented (FR-AUTH-001 through FR-AUTH-010); marked contest management features as Implemented (FR-CONT-003 through FR-CONT-011); marked Analytics (FR-ANAL-001) as Implemented; FR-CONT-003 auto-activation uses `ContestLifecycleScheduler` (30s polling) with `Instant.now()` comparisons
+- v1.7: Execution engine migrated to Docker sandbox; Java class name extracted dynamically; SecurityValidatorStep full banned-pattern lists per language; Feign calls pass X-User-Id; leaderboard composite score tiebreaker documented; FR-SUB-001 gains "contest ended" acceptance criterion; FR-LEAD-001 documents composite Redis scoring; invite link redirect-after-login flow documented in FR-CONT-010; `ContestLifecycleScheduler` reduced to 10s; Kafka `auto-offset-reset: latest` (dev)
 
 ---
 
@@ -688,12 +689,12 @@ Organizers must explicitly schedule a contest, transitioning it from `DRAFT` →
 **Functional Steps:**
 1. System validates all required fields
 2. System transitions status to `SCHEDULED`
-3. `ContestLifecycleScheduler` (polling every 30 seconds) auto-activates the contest when `startTime <= Instant.now()`
+3. `ContestLifecycleScheduler` (polling every 10 seconds) auto-activates the contest when `startTime <= Instant.now()`
 4. `ContestLifecycleScheduler` auto-completes the contest when `endTime <= Instant.now()`
 
 **Acceptance Criteria:**
 - [x] `SCHEDULED` contest is visible to participants for registration (if `PUBLIC`)
-- [x] Auto-activation triggers at start time (±30 seconds tolerance via polling scheduler)
+- [x] Auto-activation triggers at start time (±10 seconds tolerance via polling scheduler)
 - [x] Auto-completion locks submissions at end time
 - [x] Returns HTTP 200 with updated contest
 - [x] All timestamps use `Instant` (UTC) — no timezone ambiguity
@@ -890,13 +891,19 @@ Any authenticated user must be able to host (create and manage) a contest throug
 Users must be able to join a contest by entering an invite code or clicking an invite link shared by the host.
 
 **Preconditions:**
-- User is authenticated
 - Contest is in `SCHEDULED` or `ACTIVE` status
 
 **Inputs:**
 - Invite code (8-character alphanumeric) OR invite link URL
 
-**Functional Steps:**
+**Functional Steps (unauthenticated user clicking invite link):**
+1. User visits `/join/{inviteCode}` in the browser
+2. `JoinContestPage` detects unauthenticated state (Zustand `useAuthStore.isAuthenticated = false`)
+3. Frontend redirects to `/login` with React Router state `{ from: '/join/{inviteCode}' }`
+4. User logs in (credentials or OAuth2)
+5. `useLogin.ts` reads `location.state.from` and navigates back to `/join/{inviteCode}`
+
+**Functional Steps (authenticated user):**
 1. User visits the invite link OR enters the invite code on the Join Contest page
 2. System resolves invite code → looks up the corresponding contest
 3. System validates:
@@ -994,7 +1001,8 @@ Registered participants must be able to submit a code solution for a problem.
 
 **Acceptance Criteria:**
 - [x] Submission accepted with HTTP 202 (Accepted) and submission ID
-- [x] Submissions blocked after contest end time (HTTP 409)
+- [x] Submissions blocked after contest end time (HTTP 409 with error code `CONTEST_NOT_ACTIVE`)
+- [x] Frontend displays "Contest has ended — submissions are no longer accepted" on `CONTEST_NOT_ACTIVE` error
 - [x] Unauthenticated users cannot submit (HTTP 401)
 - [x] Non-participants cannot submit to a contest (HTTP 403)
 - [x] Code size limit: 64 KB per submission (Codeforces standard)
@@ -1028,8 +1036,10 @@ The execution engine must automatically evaluate submitted code against all test
 - [x] Compilation errors return the compiler error message
 - [x] Each test case result (pass/fail) stored individually
 - [x] Final verdict is the first non-AC result, or `AC` if all pass
-- [x] Execution uses ProcessBuilder with security validation (banned-pattern checks per language); Docker sandbox planned for v2
-- [x] Time limits enforced via ProcessBuilder timeout with language multipliers (C++ 1x, Java 2x, JS 2.5x, Python 3x)
+- [x] Execution uses Docker sandbox (`codeforge/*-runner` images) with SecurityValidatorStep banned-pattern pre-checks per language
+- [x] Java executor extracts public class name via regex (`public\s+class\s+(\w+)`) — supports any user-defined class name, not hardcoded `Main`
+- [x] Verdict error messages are human-readable ("Wrong answer on hidden test case") — internal test case UUIDs never exposed
+- [x] Time limits enforced via container timeout with language multipliers (C++ 1x, Java 2x, JS 2.5x, Python 3x)
 - [x] Maximum execution timeout: problem time limit × language multiplier
 
 ---
@@ -1169,8 +1179,10 @@ The system must provide a real-time leaderboard for active and completed contest
 
 **Acceptance Criteria:**
 - [x] Leaderboard updates in real-time via Kafka consumer on submission verdict
-- [x] Leaderboard stored in Redis sorted sets (ZINCRBY for score, ZREVRANGEBYSCORE for reads); PostgreSQL as source of truth
-- [x] Duplicate solve prevention via Redis sets (SISMEMBER/SADD per user per problem)
+- [x] Redis sorted set uses **composite score** = `points × 10,000,000 − secondsFromContestStart` for correct ordering: higher points always rank above lower points; ties broken by earliest solve (fewer seconds → higher score)
+- [x] Separate Redis hash `scores:contest:{id}` stores actual display points (not composite) — read when serving leaderboard API responses
+- [x] Duplicate solve prevention via Redis sets `solved:contest:{id}:user:{uid}` (SISMEMBER/SADD per user per problem)
+- [x] PostgreSQL `leaderboard` table is source of truth (stores actual score, rank, problems_solved)
 - [x] Live broadcast to connected clients via WebSocket (STOMP → /topic/leaderboard/{contestId})
 - [x] Returns paginated results (default 50 per page)
 - [x] Supports sorting by rank
@@ -1477,7 +1489,8 @@ Students must have a personal dashboard showing their performance history.
 | 1.4 | 2026-06-25 | Scoped problems to contests; marked Problem/Contest requirements as Implemented |
 | 1.5 | 2026-06-27 | Aligned with execution service implementation: code size 64KB, ProcessBuilder execution, rate limit 10/10min, Redis sorted sets + WebSocket leaderboard; marked FR-SUB-*, FR-LEAD-001, FR-ANAL-002 as Implemented |
 | 1.6 | 2026-06-27 | All Contest Service timestamps use `Instant` (UTC); marked FR-AUTH-001–010 as Implemented; marked FR-CONT-003–011 as Implemented; marked FR-ANAL-001 as Implemented; FR-CONT-003 auto-activation uses `ContestLifecycleScheduler` (30s polling) |
+| 1.7 | 2026-07-04 | Docker sandbox; dynamic Java class name; full SecurityValidatorStep banned-pattern lists; Feign X-User-Id header; composite leaderboard score; FR-SUB-001 "contest ended" criterion; FR-LEAD-001 Redis composite scoring; FR-CONT-010 redirect-after-login flow; scheduler reduced to 10s; Kafka `auto-offset-reset: latest` (dev) |
 
 ---
 
-*Document Version: 1.6 | CodeForge Platform*
+*Document Version: 1.7 | CodeForge Platform*
