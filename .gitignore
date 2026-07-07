@@ -31,6 +31,7 @@ node_modules/
 
 # Private dev notes (not for repo)
 BUGS_AND_FIXES.md
+login-demo.html
 
 # Postman
 **/postman/
