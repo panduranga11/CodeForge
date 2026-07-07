@@ -29,6 +29,9 @@ node_modules/
 .apt_generated
 *.class
 
+# Private dev notes (not for repo)
+BUGS_AND_FIXES.md
+
 # Postman
 **/postman/
 
