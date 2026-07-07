@@ -32,7 +32,7 @@ public class ContestServiceImpl implements ContestService {
     private static final String INVITE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final int INVITE_CODE_LENGTH = 8;
 
-    @Value("${app.invite-link-base:http://localhost:5173/join/}")
+    @Value("${app.invite-link-base:http://localhost:3000/join/}")
     private String inviteLinkBase;
 
     private static final String CONTEST_CACHE_KEY = "contest:%s";
@@ -156,7 +156,6 @@ public class ContestServiceImpl implements ContestService {
             throw new InvalidContestStateException("At least 1 published problem required to schedule");
         }
 
-        validateContestTimes(contest.getStartTime(), contest.getEndTime());
         contest.setStatus(ContestStatus.SCHEDULED);
         contest = contestRepository.save(contest);
 
@@ -195,11 +194,10 @@ public class ContestServiceImpl implements ContestService {
             throw new AlreadyRegisteredException();
         }
 
-        if (contest.getMaxParticipants() != null) {
-            long count = participantRepository.countByContestId(contestId);
-            if (count >= contest.getMaxParticipants()) {
-                throw new ContestFullException();
-            }
+        // Atomic increment: returns 0 if contest is full (currentParticipants >= maxParticipants)
+        int reserved = contestRepository.tryReserveSlot(contestId);
+        if (reserved == 0) {
+            throw new ContestFullException();
         }
 
         ContestParticipant participant = new ContestParticipant();

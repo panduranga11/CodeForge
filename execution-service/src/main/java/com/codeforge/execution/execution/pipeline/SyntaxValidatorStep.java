@@ -6,6 +6,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class SyntaxValidatorStep extends ExecutionStep {
 
+    public void validateOnly(PipelineContext ctx) {
+        handle(ctx);
+    }
+
     @Override
     protected PipelineContext handle(PipelineContext ctx) {
         String code = ctx.getSourceCode();

@@ -28,5 +28,6 @@ public interface ContestServiceClient {
     @GetMapping("/contest/v1/contests/{contestId}/problems/{problemId}/testcases")
     ApiResponse<List<TestCaseDto>> getTestCases(@PathVariable UUID contestId, @PathVariable UUID problemId,
                                                  @RequestParam("type") String type,
-                                                 @RequestHeader("X-User-Id") UUID userId);
+                                                 @RequestHeader("X-User-Id") UUID userId,
+                                                 @RequestHeader("X-Internal-Call") boolean internalCall);
 }

@@ -79,32 +79,7 @@ public class LeaderboardServiceImpl implements LeaderboardService {
             return;
         }
 
-        String solvedKey = String.format(SOLVED_KEY, event.getContestId(), event.getUserId());
-        Boolean alreadySolved = redisTemplate.opsForSet()
-                .isMember(solvedKey, event.getProblemId().toString());
-
-        if (Boolean.TRUE.equals(alreadySolved)) {
-            log.info("User {} already solved problem {} in contest {}, skipping",
-                    event.getUserId(), event.getProblemId(), event.getContestId());
-            return;
-        }
-
-        // Mark as solved in Redis
-        redisTemplate.opsForSet().add(solvedKey, event.getProblemId().toString());
-
-        // Composite score: points * TIME_BUCKET - secondsFromContestStart
-        // Ensures sorting by points first, then by earliest solve time for ties
-        long secondsElapsed = Math.max(0,
-                Instant.now().getEpochSecond() - contest.getStartTime().getEpochSecond());
-        long compositeIncrement = (long) event.getScore() * TIME_BUCKET - secondsElapsed;
-
-        String leaderboardKey = String.format(LEADERBOARD_KEY, event.getContestId());
-        String scoresKey = String.format(SCORES_KEY, event.getContestId());
-
-        redisTemplate.opsForZSet().incrementScore(leaderboardKey, event.getUserId().toString(), compositeIncrement);
-        redisTemplate.opsForHash().increment(scoresKey, event.getUserId().toString(), event.getScore());
-
-        // Update PostgreSQL
+        // Load DB entry first — authoritative dedup against Redis eviction / Kafka replay
         Leaderboard entry = leaderboardRepository
                 .findByContestIdAndUserId(event.getContestId(), event.getUserId())
                 .orElseGet(() -> {
@@ -118,6 +93,41 @@ public class LeaderboardServiceImpl implements LeaderboardService {
                     return newEntry;
                 });
 
+        if (entry.hasAlreadySolved(event.getProblemId())) {
+            log.info("DB dedup: user {} already solved problem {} in contest {}, skipping",
+                    event.getUserId(), event.getProblemId(), event.getContestId());
+            return;
+        }
+
+        // Redis fast-path dedup (skips Redis round-trips when key is warm)
+        String solvedKey = String.format(SOLVED_KEY, event.getContestId(), event.getUserId());
+        Boolean alreadySolved = redisTemplate.opsForSet()
+                .isMember(solvedKey, event.getProblemId().toString());
+
+        if (Boolean.TRUE.equals(alreadySolved)) {
+            log.info("Redis dedup: user {} already solved problem {} in contest {}, skipping",
+                    event.getUserId(), event.getProblemId(), event.getContestId());
+            return;
+        }
+
+        // Mark as solved in Redis
+        redisTemplate.opsForSet().add(solvedKey, event.getProblemId().toString());
+
+        // Composite score: points * TIME_BUCKET - secondsFromContestStart
+        // Ensures sorting by points first, then by earliest solve time for ties
+        long secondsElapsed = Math.max(0,
+                Instant.now().getEpochSecond() - contest.getStartTime().getEpochSecond());
+
+        String leaderboardKey = String.format(LEADERBOARD_KEY, event.getContestId());
+        String scoresKey = String.format(SCORES_KEY, event.getContestId());
+
+        if (event.getScore() > 0) {
+            long compositeIncrement = (long) event.getScore() * TIME_BUCKET - secondsElapsed;
+            redisTemplate.opsForZSet().incrementScore(leaderboardKey, event.getUserId().toString(), compositeIncrement);
+        }
+        redisTemplate.opsForHash().increment(scoresKey, event.getUserId().toString(), event.getScore());
+
+        // Update PostgreSQL
         entry.addSolvedProblem(event.getProblemId());
         entry.setScore(entry.getScore() + event.getScore());
         entry.setProblemsSolved(entry.getProblemsSolved() + 1);

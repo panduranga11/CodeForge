@@ -47,6 +47,10 @@ public class SecurityValidatorStep extends ExecutionStep {
             )
     );
 
+    public void validateOnly(PipelineContext ctx) {
+        handle(ctx);
+    }
+
     @Override
     protected PipelineContext handle(PipelineContext ctx) {
         Set<String> banned = BANNED_PATTERNS.getOrDefault(ctx.getLanguage(), Set.of());

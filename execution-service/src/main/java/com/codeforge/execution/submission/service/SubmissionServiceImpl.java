@@ -189,13 +189,12 @@ public class SubmissionServiceImpl implements SubmissionService {
     }
 
     private List<TestCaseDto> fetchTestCases(UUID contestId, UUID problemId, UUID userId) {
-        try {
-            ApiResponse<List<TestCaseDto>> response = contestClient.getTestCases(contestId, problemId, "HIDDEN", userId);
-            return response.getData();
-        } catch (Exception e) {
-            log.error("Failed to fetch test cases for problem {} in contest {}: {}",
-                    problemId, contestId, e.getMessage());
-            return List.of();
+        ApiResponse<List<TestCaseDto>> response = contestClient.getTestCases(contestId, problemId, "HIDDEN", userId, true);
+        List<TestCaseDto> testCases = response.getData();
+        if (testCases == null || testCases.isEmpty()) {
+            throw new IllegalStateException("No test cases found for problem " + problemId
+                    + " in contest " + contestId + " — grading aborted");
         }
+        return testCases;
     }
 }

@@ -76,7 +76,10 @@ public class ProblemServiceImpl implements ProblemService {
         Contest contest = contestRepository.findByIdAndDeletedAtIsNull(contestId)
                 .orElseThrow(() -> new ContestNotFoundException(contestId));
 
-        verifyProblemAccess(contest, userId);
+        // Host can always view their own problems regardless of contest status
+        if (userId == null || !contest.getHostId().equals(userId)) {
+            verifyProblemAccess(contest, userId);
+        }
 
         Optional<ProblemResponse> cached = cacheService.get(
                 String.format(PROBLEM_CACHE_KEY, problemId), ProblemResponse.class);
@@ -191,7 +194,14 @@ public class ProblemServiceImpl implements ProblemService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<TestCaseResponse> getTestCases(UUID contestId, UUID problemId, String type) {
+    public List<TestCaseResponse> getTestCases(UUID contestId, UUID problemId, String type, UUID userId, boolean internalCall) {
+        Contest contest = contestRepository.findByIdAndDeletedAtIsNull(contestId)
+                .orElseThrow(() -> new ContestNotFoundException(contestId));
+
+        if ("HIDDEN".equals(type) && !internalCall && !contest.getHostId().equals(userId)) {
+            throw new UnauthorizedAccessException("Hidden test cases are only accessible by the contest host");
+        }
+
         findProblemInContest(contestId, problemId);
 
         List<TestCase> testCases;

@@ -79,8 +79,10 @@ public class ProblemController {
     public ResponseEntity<ApiResponse<List<TestCaseResponse>>> getTestCases(
             @PathVariable UUID contestId,
             @PathVariable UUID problemId,
-            @RequestParam(required = false) String type) {
-        List<TestCaseResponse> response = problemService.getTestCases(contestId, problemId, type);
+            @RequestParam(required = false) String type,
+            @RequestHeader(value = "X-User-Id", required = false) UUID userId,
+            @RequestHeader(value = "X-Internal-Call", required = false, defaultValue = "false") boolean internalCall) {
+        List<TestCaseResponse> response = problemService.getTestCases(contestId, problemId, type, userId, internalCall);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 

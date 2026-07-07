@@ -58,6 +58,9 @@ public class Contest {
     @Column(name = "max_participants")
     private Integer maxParticipants;
 
+    @Column(name = "current_participants", nullable = false)
+    private int currentParticipants = 0;
+
     @Column(name = "invite_code", unique = true, length = 8)
     private String inviteCode;
 

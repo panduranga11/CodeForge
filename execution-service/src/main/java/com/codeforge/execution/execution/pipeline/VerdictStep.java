@@ -19,7 +19,7 @@ public class VerdictStep extends ExecutionStep {
     @Override
     protected PipelineContext handle(PipelineContext ctx) {
         if (ctx.getTestResults().isEmpty()) {
-            ctx.setFinalVerdict(Verdict.AC);
+            ctx.abort(Verdict.RE, "Internal error: no test cases were executed");
             return ctx;
         }
 

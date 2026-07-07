@@ -20,7 +20,7 @@ public class RunController {
     public ResponseEntity<ApiResponse<RunResponse>> run(
             @RequestHeader("X-User-Id") String userId,
             @Valid @RequestBody RunRequest request) {
-        RunResponse result = runService.run(request);
+        RunResponse result = runService.run(request, userId);
         return ResponseEntity.ok(ApiResponse.success(result));
     }
 }
