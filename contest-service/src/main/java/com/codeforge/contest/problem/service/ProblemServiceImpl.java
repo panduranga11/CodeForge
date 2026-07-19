@@ -166,6 +166,7 @@ public class ProblemServiceImpl implements ProblemService {
         testCase.setType(TestCaseType.valueOf(request.type()));
         testCase.setScoreWeight(request.scoreWeight());
         testCase = testCaseRepository.save(testCase);
+        cacheService.evict(String.format(PROBLEM_CACHE_KEY, problemId));
 
         log.info("Test case added id={} to problem={}", testCase.getId(), problemId);
         return problemMapper.toTestCaseResponse(testCase);
