@@ -1,6 +1,7 @@
 package com.codeforge.auth.user.service;
 
 import com.codeforge.auth.security.JwtService;
+import com.codeforge.auth.security.TokenHasher;
 import com.codeforge.auth.shared.exception.*;
 import com.codeforge.auth.user.dto.*;
 import com.codeforge.auth.user.entity.*;
@@ -74,7 +75,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public TokenResponse refreshToken(String refreshToken) {
-        RefreshToken storedToken = refreshTokenRepository.findByToken(refreshToken)
+        RefreshToken storedToken = refreshTokenRepository.findByToken(TokenHasher.sha256Hex(refreshToken))
                 .orElseThrow(InvalidRefreshTokenException::new);
 
         if (storedToken.isRevoked() || storedToken.getExpiresAt().isBefore(LocalDateTime.now())) {
@@ -95,7 +96,7 @@ public class UserServiceImpl implements UserService {
             jwtService.blacklistToken(accessToken);
         }
 
-        refreshTokenRepository.findByToken(refreshToken).ifPresent(token -> {
+        refreshTokenRepository.findByToken(TokenHasher.sha256Hex(refreshToken)).ifPresent(token -> {
             token.setRevoked(true);
             refreshTokenRepository.save(token);
         });
@@ -161,7 +162,8 @@ public class UserServiceImpl implements UserService {
 
         RefreshToken tokenEntity = new RefreshToken();
         tokenEntity.setUser(user);
-        tokenEntity.setToken(refreshToken);
+        // Store only the hash — the raw token goes to the client and nowhere else
+        tokenEntity.setToken(TokenHasher.sha256Hex(refreshToken));
         tokenEntity.setExpiresAt(LocalDateTime.now().plusSeconds(
                 jwtService.getRefreshTokenExpiryMs() / 1000));
         refreshTokenRepository.save(tokenEntity);

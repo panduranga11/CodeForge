@@ -38,15 +38,18 @@ public class SubmissionController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
+    private static final int MAX_PAGE_SIZE = 100;
+
     @GetMapping
     public ResponseEntity<ApiResponse<Page<SubmissionResponse>>> list(
             @RequestHeader("X-User-Id") UUID userId,
             @RequestParam(required = false) UUID contestId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
+        int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         Page<SubmissionResponse> response = submissionService.list(
                 userId, contestId,
-                PageRequest.of(page, size, Sort.by("submittedAt").descending()));
+                PageRequest.of(page, cappedSize, Sort.by("submittedAt").descending()));
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }

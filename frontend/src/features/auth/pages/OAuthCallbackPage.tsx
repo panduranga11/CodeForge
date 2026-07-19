@@ -17,6 +17,11 @@ export function OAuthCallbackPage() {
     const accessToken = fragmentParams.get('accessToken') ?? params.get('accessToken');
     const refreshToken = fragmentParams.get('refreshToken') ?? params.get('refreshToken');
 
+    // Scrub tokens from the address bar and browser history immediately
+    if (window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+
     if (!accessToken || !refreshToken) {
       toast.error('OAuth login failed');
       navigate('/login', { replace: true });
@@ -33,6 +38,8 @@ export function OAuthCallbackPage() {
         navigate('/dashboard', { replace: true });
       })
       .catch(() => {
+        // Don't leave half-authenticated state (tokens set, no user) behind
+        useAuthStore.getState().logout();
         toast.error('Failed to load profile');
         navigate('/login', { replace: true });
       });

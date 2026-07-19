@@ -5,6 +5,7 @@ import com.codeforge.auth.oauth2.entity.OAuthProvider;
 import com.codeforge.auth.oauth2.entity.Provider;
 import com.codeforge.auth.oauth2.repository.OAuthProviderRepository;
 import com.codeforge.auth.security.JwtService;
+import com.codeforge.auth.security.TokenHasher;
 import com.codeforge.auth.user.dto.TokenResponse;
 import com.codeforge.auth.user.entity.AuthType;
 import com.codeforge.auth.user.entity.RefreshToken;
@@ -96,7 +97,8 @@ public class OAuth2ServiceImpl implements OAuth2Service {
 
         RefreshToken tokenEntity = new RefreshToken();
         tokenEntity.setUser(user);
-        tokenEntity.setToken(refreshToken);
+        // Store only the hash — the raw token goes to the client and nowhere else
+        tokenEntity.setToken(TokenHasher.sha256Hex(refreshToken));
         tokenEntity.setExpiresAt(LocalDateTime.now().plusSeconds(
                 jwtService.getRefreshTokenExpiryMs() / 1000));
         refreshTokenRepository.save(tokenEntity);

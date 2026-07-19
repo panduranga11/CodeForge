@@ -113,6 +113,10 @@ public class SubmissionServiceImpl implements SubmissionService {
     public SubmissionResponse getById(UUID submissionId, UUID requesterId) {
         Submission submission = submissionRepo.findById(submissionId)
                 .orElseThrow(SubmissionNotFoundException::new);
+        // Owner-only: respond 404 (not 403) so submission IDs can't be probed
+        if (!submission.getUserId().equals(requesterId)) {
+            throw new SubmissionNotFoundException();
+        }
         return submissionMapper.toResponse(submission);
     }
 

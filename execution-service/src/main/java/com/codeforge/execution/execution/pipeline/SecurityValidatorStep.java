@@ -6,6 +6,13 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Fast-feedback string blacklist. This is NOT the security boundary — string
+ * matching is trivially bypassed (string concatenation, reflection, encodings).
+ * The actual isolation is the Docker sandbox (no network, cap-drop, non-root,
+ * read-only fs, memory/pids limits). This step just gives users an instant CE
+ * for obvious cases instead of burning a sandbox run.
+ */
 @Component
 public class SecurityValidatorStep extends ExecutionStep {
 
@@ -16,7 +23,7 @@ public class SecurityValidatorStep extends ExecutionStep {
                     "java.net.HttpURLConnection", "java.net.ServerSocket",
                     "java.io.File", "java.io.FileWriter", "java.io.FileReader",
                     "java.io.FileOutputStream", "java.io.FileInputStream",
-                    "java.nio.file", "ClassLoader", "Thread.sleep",
+                    "java.nio.file", "ClassLoader",
                     "SecurityManager", "System.getenv", "System.getProperty"
             ),
             "PYTHON", Set.of(
