@@ -71,7 +71,8 @@ eureka:
 # ── JWT Config ──
 app:
   jwt:
-    secret: ${JWT_SECRET:ThisIsAVeryLongSecretKeyForDevelopmentPurposesOnlyMustBeAtLeast256Bits}
+    # No default on purpose — startup must fail if JWT_SECRET is not provided
+    secret: ${JWT_SECRET}
     access-token-expiry-ms: ${JWT_ACCESS_EXPIRY:900000}      # 15 minutes
     refresh-token-expiry-ms: ${JWT_REFRESH_EXPIRY:604800000}  # 7 days
   frontend:

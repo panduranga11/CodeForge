@@ -32,7 +32,8 @@ eureka:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:ThisIsAVeryLongSecretKeyForDevelopmentPurposesOnlyMustBeAtLeast256Bits}
+    # No default on purpose — startup must fail if JWT_SECRET is not provided
+    secret: ${JWT_SECRET}
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:3000}
   public-paths:
