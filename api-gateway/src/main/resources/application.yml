@@ -1,6 +1,17 @@
 spring:
   application:
     name: api-gateway
+  cloud:
+    gateway:
+      # Required since SCG 4.2: X-Forwarded-* headers are only added for
+      # requests arriving from trusted addresses (regex on remote IP).
+      # Default trusts loopback only (local dev); override TRUSTED_PROXIES
+      # in production with your LB/ingress address range.
+      # (Set under both the new and legacy property namespaces.)
+      trusted-proxies: ${TRUSTED_PROXIES:127\\.0\\.0\\.1|0:0:0:0:0:0:0:1|::1}
+      server:
+        webflux:
+          trusted-proxies: ${TRUSTED_PROXIES:127\\.0\\.0\\.1|0:0:0:0:0:0:0:1|::1}
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -28,7 +39,8 @@ app:
     - /auth/register
     - /auth/login
     - /auth/refresh
-    - /auth/oauth2/**
+    - /auth/oauth2/authorize/**
+    - /auth/oauth2/callback/**
     - /contest/v1/problems
     - /contest/v1/contests
     - /contest/v1/contests/explore
