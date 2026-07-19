@@ -21,7 +21,7 @@ spring:
         format_sql: true
     show-sql: false
 
-  # ── Redis (disabled for local dev — enable when Redis is available) ──
+  # ── Redis (required — backs JWT blacklist for logout/token revocation) ──
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -51,6 +51,9 @@ spring:
 # ── Server ──
 server:
   port: ${SERVER_PORT:8081}
+  # Trust X-Forwarded-* headers from the gateway so {baseUrl} in OAuth2
+  # redirect-uris resolves to the gateway's address, not this service's port.
+  forward-headers-strategy: framework
 
 # ── Eureka ──
 eureka:
@@ -61,7 +64,8 @@ eureka:
     register-with-eureka: true
     fetch-registry: true
   instance:
-    prefer-ip-address: true
+    prefer-ip-address: false
+    hostname: localhost
     instance-id: ${spring.application.name}:${random.uuid}
 
 # ── JWT Config ──

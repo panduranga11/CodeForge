@@ -39,18 +39,18 @@ public class OAuth2AuthenticationSuccessHandler extends SimpleUrlAuthenticationS
 
         if (tokenResponse == null) {
             log.error("TokenResponse not found in OAuth2User attributes");
-            response.sendRedirect(frontendUrl + "/auth/callback?error=internal_error");
+            response.sendRedirect(frontendUrl + "/oauth/callback?error=internal_error");
             return;
         }
 
         // Build redirect URL with tokens in fragment (#) per HLD security note
-        String redirectUrl = UriComponentsBuilder.fromUriString(frontendUrl + "/auth/callback")
+        String redirectUrl = UriComponentsBuilder.fromUriString(frontendUrl + "/oauth/callback")
                 .fragment("accessToken=" + tokenResponse.accessToken()
                         + "&refreshToken=" + tokenResponse.refreshToken())
                 .build()
                 .toUriString();
 
-        log.info("OAuth2 login successful, redirecting to frontend");
+        log.info("OAuth2 login successful, redirecting to frontend base={}/oauth/callback", frontendUrl);
         getRedirectStrategy().sendRedirect(request, response, redirectUrl);
     }
 }

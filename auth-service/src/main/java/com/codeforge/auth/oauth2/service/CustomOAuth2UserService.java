@@ -13,7 +13,14 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.RestTemplate;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -40,7 +47,7 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
         Provider provider = resolveProvider(registrationId);
         Map<String, Object> attributes = oAuth2User.getAttributes();
 
-        OAuth2UserInfo userInfo = extractUserInfo(provider, attributes);
+        OAuth2UserInfo userInfo = extractUserInfo(provider, attributes, userRequest.getAccessToken().getTokenValue());
         if (userInfo.getEmail() == null || userInfo.getEmail().isBlank()) {
             throw new OAuth2AuthenticationException(
                     new OAuth2Error("email_not_found"),
@@ -63,10 +70,10 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
         );
     }
 
-    private OAuth2UserInfo extractUserInfo(Provider provider, Map<String, Object> attributes) {
+    private OAuth2UserInfo extractUserInfo(Provider provider, Map<String, Object> attributes, String accessToken) {
         return switch (provider) {
             case GOOGLE -> extractGoogleUserInfo(attributes);
-            case GITHUB -> extractGitHubUserInfo(attributes);
+            case GITHUB -> extractGitHubUserInfo(attributes, accessToken);
         };
     }
 
@@ -79,16 +86,56 @@ public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequ
                 .build();
     }
 
-    private OAuth2UserInfo extractGitHubUserInfo(Map<String, Object> attributes) {
+    private OAuth2UserInfo extractGitHubUserInfo(Map<String, Object> attributes, String accessToken) {
         Object idValue = attributes.get("id");
         String providerId = idValue != null ? idValue.toString() : null;
 
+        String email = getString(attributes, "email");
+        if (email == null || email.isBlank()) {
+            email = fetchPrimaryGitHubEmail(accessToken);
+        }
+
         return OAuth2UserInfo.builder()
                 .providerId(providerId)
-                .email(getString(attributes, "email"))
+                .email(email)
                 .name(getString(attributes, "name"))
                 .avatarUrl(getString(attributes, "avatar_url"))
                 .build();
+    }
+
+    /**
+     * GitHub only includes "email" on GET /user if the user has made it public.
+     * Most accounts keep it private, so fall back to the dedicated emails
+     * endpoint (requires the user:email scope) and pick the primary, verified one.
+     */
+    private String fetchPrimaryGitHubEmail(String accessToken) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+
+        try {
+            ResponseEntity<List<Map<String, Object>>> response = new RestTemplate().exchange(
+                    "https://api.github.com/user/emails",
+                    HttpMethod.GET,
+                    new HttpEntity<>(headers),
+                    new ParameterizedTypeReference<>() {});
+
+            List<Map<String, Object>> emails = response.getBody();
+            if (emails == null) {
+                return null;
+            }
+
+            return emails.stream()
+                    .filter(e -> Boolean.TRUE.equals(e.get("primary")) && Boolean.TRUE.equals(e.get("verified")))
+                    .map(e -> (String) e.get("email"))
+                    .findFirst()
+                    .orElseGet(() -> emails.stream()
+                            .map(e -> (String) e.get("email"))
+                            .findFirst()
+                            .orElse(null));
+        } catch (Exception ex) {
+            log.warn("Failed to fetch GitHub user emails: {}", ex.getMessage());
+            return null;
+        }
     }
 
     private Provider resolveProvider(String registrationId) {

@@ -11,8 +11,11 @@ export function OAuthCallbackPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const accessToken = params.get('accessToken');
-    const refreshToken = params.get('refreshToken');
+    // Success handler puts tokens in the URL fragment (#), not the query
+    // string, so they're never sent to a server in access logs.
+    const fragmentParams = new URLSearchParams(window.location.hash.slice(1));
+    const accessToken = fragmentParams.get('accessToken') ?? params.get('accessToken');
+    const refreshToken = fragmentParams.get('refreshToken') ?? params.get('refreshToken');
 
     if (!accessToken || !refreshToken) {
       toast.error('OAuth login failed');
