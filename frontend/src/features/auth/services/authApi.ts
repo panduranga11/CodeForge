@@ -1,5 +1,5 @@
 import { apiClient } from '@/shared/api/axiosClient';
-import type { ApiResponse, TokenResponse, LoginRequest, RegisterRequest, User, UpdateProfileRequest, OAuthProviderResponse } from '@/shared/types';
+import type { ApiResponse, TokenResponse, LoginRequest, RegisterRequest, User, UpdateProfileRequest } from '@/shared/types';
 
 export const authApi = {
   login: (data: LoginRequest) =>
@@ -24,10 +24,4 @@ export const authApi = {
 
   upgradeToOrganizer: () =>
     apiClient.patch<ApiResponse<TokenResponse>>('/auth/upgrade-to-organizer').then((r) => r.data),
-
-  getOAuthProviders: () =>
-    apiClient.get<ApiResponse<OAuthProviderResponse[]>>('/auth/oauth2/providers').then((r) => r.data),
-
-  unlinkOAuth: (provider: string) =>
-    apiClient.delete<ApiResponse<void>>(`/auth/oauth2/unlink/${provider}`).then((r) => r.data),
 };

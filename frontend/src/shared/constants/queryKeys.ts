@@ -22,6 +22,4 @@ export const qk = {
     ['leaderboard', contestId] as const,
 
   analytics: (contestId: string) => ['analytics', contestId] as const,
-
-  oauthProviders: () => ['oauthProviders'] as const,
 } as const;

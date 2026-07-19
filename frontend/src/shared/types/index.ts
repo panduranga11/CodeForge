@@ -1,8 +1,8 @@
 export type { ApiResponse, PageResponse } from './api';
 export type {
-  Role, UserStatus, AuthType, OAuthProvider,
+  Role, UserStatus, AuthType,
   User, TokenResponse, LoginRequest, RegisterRequest,
-  UpdateProfileRequest, OAuthProviderResponse,
+  UpdateProfileRequest,
 } from './auth';
 export type {
   ContestStatus, Visibility, RegType, ScoringMode,

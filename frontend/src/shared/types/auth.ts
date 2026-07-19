@@ -1,7 +1,6 @@
 export type Role = 'STUDENT' | 'ORGANIZER' | 'ADMIN';
 export type UserStatus = 'ACTIVE' | 'SUSPENDED' | 'INACTIVE';
 export type AuthType = 'LOCAL' | 'OAUTH' | 'BOTH';
-export type OAuthProvider = 'GOOGLE' | 'GITHUB';
 
 export interface User {
   id: string;
@@ -35,10 +34,4 @@ export interface UpdateProfileRequest {
   fullName?: string;
   currentPassword?: string;
   newPassword?: string;
-}
-
-export interface OAuthProviderResponse {
-  provider: OAuthProvider;
-  providerEmail: string;
-  linkedAt: string;
 }
