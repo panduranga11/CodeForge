@@ -3,6 +3,7 @@ package com.codeforge.contest.contest.controller;
 import com.codeforge.contest.contest.dto.*;
 import com.codeforge.contest.contest.service.ContestService;
 import com.codeforge.contest.shared.response.ApiResponse;
+import com.codeforge.contest.shared.util.PageUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -49,7 +50,7 @@ public class ContestController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
         Page<ContestResponse> response = contestService.list(
-                PageRequest.of(page, size, Sort.by("startTime").descending()));
+                PageRequest.of(page, PageUtils.clampSize(size), Sort.by("startTime").descending()));
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
@@ -58,7 +59,7 @@ public class ContestController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
         Page<ContestResponse> response = contestService.explore(
-                PageRequest.of(page, size, Sort.by("startTime").descending()));
+                PageRequest.of(page, PageUtils.clampSize(size), Sort.by("startTime").descending()));
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
@@ -68,7 +69,7 @@ public class ContestController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
         Page<ContestResponse> response = contestService.myContests(userId,
-                PageRequest.of(page, size, Sort.by("startTime").descending()));
+                PageRequest.of(page, PageUtils.clampSize(size), Sort.by("startTime").descending()));
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
@@ -78,7 +79,7 @@ public class ContestController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         Page<ContestResponse> response = contestService.participating(userId,
-                PageRequest.of(page, size));
+                PageRequest.of(page, PageUtils.clampSize(size)));
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
