@@ -1,5 +1,6 @@
 package com.codeforge.auth.user.dto;
 
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record UpdateProfileRequest(
@@ -8,6 +9,10 @@ public record UpdateProfileRequest(
 
         String currentPassword,
 
+        // Same policy as registration — a password change must not weaken it
         @Size(min = 8)
+        @Pattern(regexp = ".*[A-Z].*", message = "must contain at least one uppercase letter")
+        @Pattern(regexp = ".*[0-9].*", message = "must contain at least one digit")
+        @Pattern(regexp = ".*[!@#$%^&*].*", message = "must contain at least one special character")
         String newPassword
 ) {}
